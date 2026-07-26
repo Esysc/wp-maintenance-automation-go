@@ -232,5 +232,6 @@
   "upgrade_pipeline_summary": "Questo eseguirà la pipeline completa di aggiornamento: backup -> validazione -> aggiornamento -> healthcheck -> rollback in caso di errore.",
   "upgrade_progress": "Avanzamento",
   "upgrade_started": "Aggiornamento avviato",
-  "value_ok": "ok"
+  "value_ok": "ok",
+  "no_sites_configured": "No sites configured yet. Click Add Site to get started."
 }

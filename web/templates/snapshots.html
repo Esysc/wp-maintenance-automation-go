@@ -71,11 +71,11 @@
             } else {
                 snapshots.forEach(s => {
                     tbody.innerHTML += `<tr>
-                        <td><code>${(s.short_id || s.id || '-').substring(0, 16)}</code></td>
-                        <td>${s.time || '-'}</td>
-                        <td>${s.hostname || s.host || '-'}</td>
-                        <td>${(s.tags || []).join(', ') || '-'}</td>
-                        <td>${(s.paths || []).join(', ').substring(0, 60) || '-'}</td>
+                        <td><code>${App.escapeHTML((s.short_id || s.id || '-').substring(0, 16))}</code></td>
+                        <td>${App.escapeHTML(s.time || '-')}</td>
+                        <td>${App.escapeHTML(s.hostname || s.host || '-')}</td>
+                        <td>${App.escapeHTML((s.tags || []).join(', ') || '-')}</td>
+                        <td>${App.escapeHTML((s.paths || []).join(', ').substring(0, 60) || '-')}</td>
                     </tr>`;
                 });
             }

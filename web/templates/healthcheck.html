@@ -64,7 +64,7 @@
         const el = document.getElementById('hcResult');
         el.style.display = 'block';
         if (result.success && result.data) {
-            el.innerHTML = `${App.t('health_label_status')}: ${result.data.status_code}, ${App.t('health_label_expected')}: ${result.data.expected_code}, ${App.t('health_label_passed')}: ${result.data.passed ? App.t('option_yes') : App.t('option_no')}, ${App.t('health_label_response')}: ${result.data.response_time_ms}ms`;
+            el.innerHTML = `${App.t('health_label_status')}: ${result.data.status_code ?? '-'}, ${App.t('health_label_expected')}: ${result.data.expected_code ?? '-'}, ${App.t('health_label_passed')}: ${result.data.passed ? App.t('option_yes') : App.t('option_no')}, ${App.t('health_label_response')}: ${result.data.response_time_ms ?? '-'}ms`;
             el.className = 'result-box ' + (result.data.passed ? 'success' : 'error');
             App.toast(result.data.passed ? App.t('health_check_passed') : App.t('health_check_failed'), result.data.passed ? 'success' : 'error');
         } else {

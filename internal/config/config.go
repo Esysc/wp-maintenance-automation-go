@@ -9,25 +9,25 @@ import (
 )
 
 type Config struct {
-	WPSSHHost       string        `json:"wp_ssh_host"`
-	WPSSHPort       int           `json:"wp_ssh_port"`
-	WPSSHUser       string        `json:"wp_ssh_user"`
-	WPRoot          string        `json:"wp_root"`
-	ResticRepository string        `json:"restic_repository"`
-	ResticPasswordFile string      `json:"restic_password_file"`
-	BackupDir       string        `json:"backup_dir"`
-	RetentionFlags  string        `json:"retention_flags"`
-	HealthcheckURL  string        `json:"healthcheck_url"`
-	HealthcheckRetry int           `json:"healthcheck_retry"`
-	StagingEnabled  bool          `json:"staging_enabled"`
-	StagingHost     string        `json:"staging_host"`
-	StagingPort     int           `json:"staging_port"`
-	StagingUser     string        `json:"staging_user"`
-	StagingRoot     string        `json:"staging_root"`
-	AdminUsername   string        `json:"admin_username"`
-	AdminPassword   string        `json:"admin_password"`
-	SecretKey       string        `json:"secret_key"`
-	APITokenDuration time.Duration `json:"api_token_duration"`
+	WPSSHHost          string        `json:"wp_ssh_host"`
+	WPSSHPort          int           `json:"wp_ssh_port"`
+	WPSSHUser          string        `json:"wp_ssh_user"`
+	WPRoot             string        `json:"wp_root"`
+	ResticRepository   string        `json:"restic_repository"`
+	ResticPasswordFile string        `json:"restic_password_file"`
+	BackupDir          string        `json:"backup_dir"`
+	RetentionFlags     string        `json:"retention_flags"`
+	HealthcheckURL     string        `json:"healthcheck_url"`
+	HealthcheckRetry   int           `json:"healthcheck_retry"`
+	StagingEnabled     bool          `json:"staging_enabled"`
+	StagingHost        string        `json:"staging_host"`
+	StagingPort        int           `json:"staging_port"`
+	StagingUser        string        `json:"staging_user"`
+	StagingRoot        string        `json:"staging_root"`
+	AdminUsername      string        `json:"admin_username"`
+	AdminPassword      string        `json:"admin_password"`
+	SecretKey          string        `json:"secret_key"`
+	APITokenDuration   time.Duration `json:"api_token_duration"`
 }
 
 const (
@@ -77,25 +77,25 @@ func SaveConfig(config *Config, configPath string) error {
 // NewDefaultConfig creates a default configuration
 func NewDefaultConfig() *Config {
 	return &Config{
-		WPSSHHost:       "example.com",
-		WPSSHPort:       DefaultPort,
-		WPSSHUser:       "ubuntu",
-		WPRoot:          "/var/www/html",
-		ResticRepository: "/path/to/restic-repo",
+		WPSSHHost:          "example.com",
+		WPSSHPort:          DefaultPort,
+		WPSSHUser:          "ubuntu",
+		WPRoot:             "/var/www/html",
+		ResticRepository:   "/path/to/restic-repo",
 		ResticPasswordFile: "$HOME/.config/restic/wp_repo_password",
-		BackupDir:       DefaultBackupDir,
-		RetentionFlags:  "--keep-daily 14 --keep-weekly 8 --keep-monthly 12",
-		HealthcheckURL:  "",
-		HealthcheckRetry: DefaultRetry,
-		StagingEnabled:  false,
-		StagingHost:     "staging.example.com",
-		StagingPort:     DefaultPort,
-		StagingUser:     "ubuntu",
-		StagingRoot:     "/var/www/html",
-		AdminUsername:   "admin",
-		AdminPassword:   "changeme",
-		SecretKey:       "change-this-secret-key-in-production",
-		APITokenDuration: DefaultDuration,
+		BackupDir:          DefaultBackupDir,
+		RetentionFlags:     "--keep-daily 14 --keep-weekly 8 --keep-monthly 12",
+		HealthcheckURL:     "",
+		HealthcheckRetry:   DefaultRetry,
+		StagingEnabled:     false,
+		StagingHost:        "staging.example.com",
+		StagingPort:        DefaultPort,
+		StagingUser:        "ubuntu",
+		StagingRoot:        "/var/www/html",
+		AdminUsername:      "admin",
+		AdminPassword:      "changeme",
+		SecretKey:          "change-this-secret-key-in-production",
+		APITokenDuration:   DefaultDuration,
 	}
 }
 
@@ -122,9 +122,9 @@ func (c *Config) Validate() error {
 // GetSSHOptions returns SSH options for remote connections
 func (c *Config) GetSSHOptions() map[string]string {
 	options := map[string]string{
-		"BatchMode":           "yes",
+		"BatchMode":             "yes",
 		"StrictHostKeyChecking": "accept-new",
-		"ConnectTimeout":       "15",
+		"ConnectTimeout":        "15",
 	}
 
 	if c.WPSSHPort != DefaultPort {

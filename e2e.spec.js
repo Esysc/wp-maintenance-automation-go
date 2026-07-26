@@ -149,7 +149,7 @@ test.describe('3. Token Management', () => {
 
     // Fill in token name
     await page.fill('#tokenName', 'E2E Test Token');
-    
+
     // Submit
     await page.click('#tokenCreateForm button[type="submit"]');
     await page.waitForTimeout(2000);

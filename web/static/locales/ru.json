@@ -232,5 +232,6 @@
   "upgrade_pipeline_summary": "Это запустит полный конвейер обновления: резервное копирование -> проверка -> обновление -> проверка состояния -> откат при сбое.",
   "upgrade_progress": "Прогресс",
   "upgrade_started": "Обновление запущено",
-  "value_ok": "ok"
+  "value_ok": "ok",
+  "no_sites_configured": "No sites configured yet. Click Add Site to get started."
 }

@@ -232,5 +232,6 @@
   "upgrade_pipeline_summary": "完全なアップグレードパイプラインを実行します: バックアップ -> 検証 -> アップグレード -> ヘルスチェック -> 失敗時ロールバック。",
   "upgrade_progress": "進行状況",
   "upgrade_started": "アップグレードが開始されました",
-  "value_ok": "正常"
+  "value_ok": "正常",
+  "no_sites_configured": "No sites configured yet. Click Add Site to get started."
 }

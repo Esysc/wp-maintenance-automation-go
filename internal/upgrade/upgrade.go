@@ -11,64 +11,64 @@ import (
 type UpgradePhase string
 
 const (
-	PhaseInit         UpgradePhase = "init"
-	PhaseBackup       UpgradePhase = "backup"
-	PhaseValidate     UpgradePhase = "validate"
-	PhaseRehearse     UpgradePhase = "rehearse"
-	PhaseApproval     UpgradePhase = "approval"
-	PhaseUpgrade      UpgradePhase = "upgrade"
-	PhaseHealthcheck  UpgradePhase = "healthcheck"
-	PhaseRollback     UpgradePhase = "rollback"
-	PhaseComplete     UpgradePhase = "complete"
+	PhaseInit        UpgradePhase = "init"
+	PhaseBackup      UpgradePhase = "backup"
+	PhaseValidate    UpgradePhase = "validate"
+	PhaseRehearse    UpgradePhase = "rehearse"
+	PhaseApproval    UpgradePhase = "approval"
+	PhaseUpgrade     UpgradePhase = "upgrade"
+	PhaseHealthcheck UpgradePhase = "healthcheck"
+	PhaseRollback    UpgradePhase = "rollback"
+	PhaseComplete    UpgradePhase = "complete"
 )
 
 type UpgradeResult struct {
 	Phase     UpgradePhase `json:"phase"`
-	Success   bool          `json:"success"`
-	Message   string        `json:"message"`
-	Timestamp time.Time     `json:"timestamp"`
-	Snapshot  string        `json:"snapshot,omitempty"`
+	Success   bool         `json:"success"`
+	Message   string       `json:"message"`
+	Timestamp time.Time    `json:"timestamp"`
+	Snapshot  string       `json:"snapshot,omitempty"`
 }
 
 type UpgradeReport struct {
-	Timestamp     string          `json:"timestamp"`
-	Host          string          `json:"host"`
-	WPRoot        string          `json:"wp_root"`
-	Snapshot      string          `json:"snapshot"`
-	HealthcheckURL string         `json:"healthcheck_url"`
-	Steps         []UpgradeResult `json:"steps"`
-	FinalStatus   string          `json:"final_status"`
-	FinalReason   string          `json:"final_reason"`
+	Timestamp      string          `json:"timestamp"`
+	Host           string          `json:"host"`
+	WPRoot         string          `json:"wp_root"`
+	Snapshot       string          `json:"snapshot"`
+	HealthcheckURL string          `json:"healthcheck_url"`
+	Steps          []UpgradeResult `json:"steps"`
+	FinalStatus    string          `json:"final_status"`
+	FinalReason    string          `json:"final_reason"`
 }
 
 type UpgradeManager struct {
-	sshClient          *ssh.Client
-	wpRoot             string
-	healthcheckURL     string
-	autoRollback       bool
-	stagingRehearsal   bool
-	stagingHost        string
-	stagingUser        string
-	stagingPort        int
-	stagingRoot        string
-	wpCLIBin           string
-	wpCLIExtraArgs     string
-	reportDir          string
+	sshClient        *ssh.Client
+	wpRoot           string
+	healthcheckURL   string
+	autoRollback     bool
+	stagingRehearsal bool
+	stagingHost      string
+	stagingUser      string
+	stagingPort      int
+	stagingRoot      string
+	wpCLIBin         string
+	wpCLIExtraArgs   string
+	reportDir        string
 }
 
 type UpgradeOptions struct {
-	SSHClient          *ssh.Client
-	WPRoot             string
-	HealthcheckURL     string
-	AutoRollback       bool
-	StagingRehearsal   bool
-	StagingHost        string
-	StagingUser        string
-	StagingPort        int
-	StagingRoot        string
-	WPCLIBin           string
-	WPCLIExtraArgs     string
-	ReportDir          string
+	SSHClient        *ssh.Client
+	WPRoot           string
+	HealthcheckURL   string
+	AutoRollback     bool
+	StagingRehearsal bool
+	StagingHost      string
+	StagingUser      string
+	StagingPort      int
+	StagingRoot      string
+	WPCLIBin         string
+	WPCLIExtraArgs   string
+	ReportDir        string
 }
 
 func NewUpgradeManager(opts *UpgradeOptions) *UpgradeManager {
@@ -101,11 +101,11 @@ func NewUpgradeManager(opts *UpgradeOptions) *UpgradeManager {
 func (um *UpgradeManager) Run() (*UpgradeReport, error) {
 	timestamp := time.Now().Format("20060102_150405")
 	report := &UpgradeReport{
-		Timestamp:     timestamp,
-		Host:          um.sshClient.DSN(),
-		WPRoot:        um.wpRoot,
+		Timestamp:      timestamp,
+		Host:           um.sshClient.DSN(),
+		WPRoot:         um.wpRoot,
 		HealthcheckURL: um.healthcheckURL,
-		FinalStatus:   "failed",
+		FinalStatus:    "failed",
 	}
 
 	defer um.writeReport(report, timestamp)

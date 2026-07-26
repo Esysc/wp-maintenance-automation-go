@@ -1,29 +1,9 @@
-{
-	{{if ne .Env.WP_MAINTENANCE_DOMAIN ""}}
-	{{.Env.WP_MAINTENANCE_DOMAIN}}
-	{{end}}
-}
-
-{{if eq .Env.WP_MAINTENANCE_DOMAIN ""}}
-:8080 {
+{$WP_MAINTENANCE_DOMAIN:localhost} {
+    tls internal
     reverse_proxy web:8080
 }
 
-:8081 {
+api.{$WP_MAINTENANCE_DOMAIN:localhost} {
+    tls internal
     reverse_proxy api:8081
 }
-{{else}}
-{{.Env.WP_MAINTENANCE_DOMAIN}} {
-    reverse_proxy web:8080
-}
-
-{{if ne .Env.WP_MAINTENANCE_API_DOMAIN ""}}
-{{.Env.WP_MAINTENANCE_API_DOMAIN}} {
-    reverse_proxy api:8081
-}
-{{else}}
-api.{{.Env.WP_MAINTENANCE_DOMAIN}} {
-    reverse_proxy api:8081
-}
-{{end}}
-{{end}}

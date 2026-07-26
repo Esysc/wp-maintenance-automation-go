@@ -68,8 +68,8 @@ run: run-server
 
 dev:
 	@echo "Starting combined server..."
-	@echo "API: https://localhost:8081"
-	@echo "Web: https://localhost:8080"
+	@echo "API: http://localhost:8081"
+	@echo "Web: http://localhost:8080"
 	go run ./cmd/server/
 
 fmt:

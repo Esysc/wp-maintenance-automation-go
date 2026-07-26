@@ -25,12 +25,22 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - One-click rollback capabilities
 
 ### API Endpoints
-- `POST /api/v1/backup` - Create a new backup
+- `POST /api/v1/auth/login` - Authenticate and get a token
+- `GET /api/v1/auth/state` - Check authentication state
+- `POST /api/v1/auth/change-password` - Change password (auth required)
+- `GET /api/v1/health` - Health check
+- `GET /api/v1/status` - System status overview
+- `GET/POST /api/v1/backups` - List / create backups
+- `GET/DELETE /api/v1/backups/:id` - Backup details / delete
 - `POST /api/v1/upgrade` - Perform WordPress upgrade
-- `POST /api/v1/restore` - Restore from backup
 - `GET /api/v1/snapshots` - List available snapshots
-- `GET /api/v1/status` - Check system status
 - `POST /api/v1/healthcheck` - Run health checks
+- `GET/POST /api/v1/sites` - List / create sites
+- `GET/PUT/DELETE /api/v1/sites/:id` - Site details / update / delete
+- `GET/POST /api/v1/users` - List / create users
+- `GET/DELETE /api/v1/users/:id` - User details / delete
+- `GET/POST /api/v1/tokens` - List / create API tokens
+- `DELETE /api/v1/tokens/:id` - Revoke token
 
 ### Web Interface
 - Dashboard for monitoring backup status
@@ -42,12 +52,25 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 
 ### Prerequisites
 - Go 1.25 or higher
-- Docker and Docker Compose (for development/testing)
+- Docker and Docker Compose (recommended for deployment)
 - SSH access to WordPress servers
 - restic (for backup storage)
 - MySQL/MariaDB database access
 
-### Installation
+### Quick Start with Docker Compose
+
+```bash
+docker compose up -d
+```
+
+This starts three services:
+- **Caddy** (port 80/443) - Reverse proxy with automatic HTTPS
+- **API** (port 8081) - REST API server
+- **Web** (port 8080) - Web UI server
+
+Access the web UI at `https://localhost` (or `http://localhost` which redirects to HTTPS).
+
+### Local Development
 
 1. Clone the repository:
 ```bash
@@ -60,7 +83,7 @@ cd wp-maintenance-automation-go
 go mod download
 ```
 
-3. Build the application (three binaries):
+3. Build the application:
 ```bash
 make build
 ```
@@ -78,7 +101,13 @@ cp .env.example .env
 # Edit .env with your settings
 ```
 
-5. Run the application(s):
+5. Run the servers:
+
+```bash
+make dev
+```
+
+Or run individually:
 
 API server (default port 8081):
 ```bash
@@ -95,34 +124,65 @@ CLI client:
 ./bin/wp-maintenance help
 ```
 
-### Development
+### Development Commands
 
-Run the development servers:
 ```bash
-make dev
+make dev        # Start combined API + Web server
+make test       # Run tests
+make lint       # Run linter
+make clean      # Clean build artifacts
 ```
 
-Run tests:
-```bash
-make test
-```
+## Configuration
 
-Run linter:
-```bash
-make lint
-```
+### Environment Variables
 
-## Operational Notes
+Key environment variables (see `.env.example`):
 
-### Authentication and Login Modes
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `API_PORT` | `8081` | API server port |
+| `WEB_PORT` | `8080` | Web UI server port |
+| `API_URL` | `http://localhost:8081` | API URL for web proxy |
+| `DATA_DIR` | `./data` | Data directory (DB, logs) |
+| `LOG_LEVEL` | `info` | Log level |
+| `DEBUG` | `false` | Enable debug mode |
+| `SECRET_KEY` | `default-secret-key` | JWT signing / encryption key |
+| `DATA_ENCRYPTION_KEY` | falls back to `SECRET_KEY` | AES-GCM encryption key |
+| `RESTIC_REPOSITORY` | - | Global restic repository (optional) |
+| `RESTIC_PASSWORD_FILE` | - | Global restic password file (optional) |
+| `TLS_DISABLE` | `false` | Disable API TLS |
+| `WEB_TLS_DISABLE` | `false` | Disable Web TLS |
+| `WP_MAINTENANCE_TOKEN` | - | Pre-shared token for web->API auth |
+| `WP_MAINTENANCE_DOMAIN` | `localhost` | Domain for Caddy / Let's Encrypt |
+
+### Per-Site Configuration (Database)
+
+Each WordPress site is configured through the Web UI and stored in the database (not env vars):
+
+- SSH host, user, port, key
+- WordPress installation path
+- Database credentials
+- Restic repository and password
+- Backup retention policy
+
+### Caddy / TLS Configuration
+
+- **No domain set** (`WP_MAINTENANCE_DOMAIN` empty): Caddy uses self-signed certificates via `tls internal` — suitable for local development.
+- **Domain set** (`WP_MAINTENANCE_DOMAIN=example.com`): Caddy automatically provisions Let's Encrypt certificates for your domain.
+- HTTP on port 80 redirects to HTTPS on port 443 automatically.
+
+## Authentication and Login Modes
+
 - Login supports two modes:
-  - First setup / forced password mode: requires `password` and `passwordConfirm`.
-  - Normal login mode: requires only `password`.
+  - First setup / forced password mode: requires `password` and `passwordConfirm`
+  - Normal login mode: requires only `password`
 - Auth state endpoint:
   - `GET /api/v1/auth/state` (API)
   - `GET /api/auth/state` (web proxy)
 
 ### Password Reset (CLI Recovery)
+
 Reset internal admin password directly in local DB (no API token required):
 
 ```bash
@@ -136,12 +196,12 @@ go run ./cmd/cli reset-password
 ```
 
 ### Database Location and Git Ignore
-- Runtime DB file: `data/wp-maintenance.db` (host filesystem).
-- In Docker Compose, host `./data` is mounted into `/app/data`.
-- `data/` is ignored by git in `.gitignore`.
+- Runtime DB file: `data/wp-maintenance.db` (host filesystem)
+- In Docker Compose, host `./data` is mounted into `/app/data`
+- `data/` is ignored by git in `.gitignore`
 
 ### Encryption at Rest
-- User passwords are stored as bcrypt hashes in `users.password_hash`.
+- User passwords are stored as bcrypt hashes in `users.password_hash`
 - Sensitive site fields are encrypted at rest using AES-GCM with prefix `enc:v1:`:
   - `sites.db_password`
   - `sites.restic_password_file`
@@ -149,31 +209,7 @@ go run ./cmd/cli reset-password
   - `DATA_ENCRYPTION_KEY`
   - fallback `SECRET_KEY`
   - fallback `default-secret-key`
-- Legacy plaintext site secrets are auto-migrated to encrypted form on DB open.
-
-### Snapshots Endpoint Through Web UI
-- The web proxy now exposes snapshots routes used by the UI:
-  - `GET /api/snapshots`
-  - `GET /api/v1/snapshots`
-- If unauthenticated, the web layer can redirect to `/login`; the snapshots page now handles this safely.
-
-## Configuration
-
-Key environment variables see `.env.example` for complete configuration options:
-- `API_PORT` - API server port (default: 8081)
-- `WEB_PORT` - Web UI server port (default: 8080)
-- `API_URL` - API server URL for web UI proxy (default: http://localhost:8081)
-- `WP_SSH_HOST` - WordPress server hostname
-- `WP_SSH_USER` - SSH username
-- `WP_ROOT` - WordPress installation path
-- `RESTIC_REPOSITORY` - Backup repository URL
-- `DB_HOST` - Database server
-- `DB_USER` - Database username
-- `DB_PASSWORD` - Database password
-- `ADMIN_USERNAME` - Initial admin username
-- `ADMIN_PASSWORD` - Initial admin password
-- `SECRET_KEY` - JWT/API token signing key
-- `DATA_DIR` - Data directory for config and state (default: ./data)
+- Legacy plaintext site secrets are auto-migrated to encrypted form on DB open
 
 ## API Documentation
 
@@ -181,17 +217,25 @@ Full API documentation available at `/api/docs` (when running with Swagger integ
 
 ### Example Usage
 
-Create a backup:
+Login and get a token:
 ```bash
-curl -X POST http://localhost:8081/api/v1/backup \
+curl -X POST https://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <your-token>" \
-  -d '{"wp_host":"example.com","wp_user":"ubuntu","wp_root":"/var/www/html"}'
+  -d '{"password":"your-password"}'
 ```
 
-Check status:
+Use the token for authenticated requests:
 ```bash
-curl http://localhost:8081/api/v1/status
+TOKEN="<your-token>"
+curl -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/status
+```
+
+Create a backup for a site:
+```bash
+curl -X POST https://localhost/api/v1/backups \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"site_id":1}'
 ```
 
 ## Project Structure
@@ -227,14 +271,9 @@ wp-maintenance-automation-go/
 
 ## Testing
 
-Run all tests:
 ```bash
-make test
-```
-
-Run tests with coverage:
-```bash
-make test-cover
+make test        # Run all tests
+make test-cover  # Run tests with coverage
 ```
 
 Run specific test suite:
@@ -244,7 +283,6 @@ go test ./internal/upgrade/...
 ```
 
 Run visual Playwright test with explicit login password:
-
 ```bash
 WP_MAINTENANCE_TEST_PASSWORD='<your-password>' npx playwright test visual-test.spec.js --workers=1
 ```
@@ -253,10 +291,17 @@ WP_MAINTENANCE_TEST_PASSWORD='<your-password>' npx playwright test visual-test.s
 
 Build and run with Docker Compose:
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
-This starts both the API server (port 8081) and web UI (port 8080).
+This starts:
+1. **Caddy** on ports 80/443 — reverse proxy with TLS
+2. **API server** on port 8081
+3. **Web UI** on port 8080
+
+For local development without a real domain, Caddy uses self-signed certificates. Browsers will show a security warning — proceed anyway or use `curl -k`.
+
+For production, set `WP_MAINTENANCE_DOMAIN=yourdomain.com` and Caddy will automatically provision Let's Encrypt certificates.
 
 ## Contributing
 

@@ -66,7 +66,7 @@ test('VISUAL: full flow with DOM verification', async ({ page }) => {
     // Submit
     await page.click('#siteCreateForm button[type="submit"]');
     await page.waitForTimeout(2000);
-    
+
     const siteCards = await page.locator('#sitesBody .entity-card').count();
     console.log('[6] Site cards after create:', siteCards);
     const siteTitles = await page.locator('#sitesBody .entity-title').allTextContents();

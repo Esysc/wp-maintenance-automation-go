@@ -87,6 +87,10 @@ var/reports/
 # Restic cache
 restic_cache/
 
+# Caddy runtime data (TLS certs, autosaved config)
+caddy_data/
+caddy_config/
+
 # Node.js
 node_modules/
 

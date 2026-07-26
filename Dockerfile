@@ -33,7 +33,7 @@ COPY --from=builder /app/web-server .
 COPY --from=builder /app/cli .
 
 # Create necessary directories
-RUN mkdir -p /app/data /app/logs /app/backup_artifacts /app/restore
+RUN mkdir -p /app/data /app/logs /app/backup_artifacts /app/restore /etc/caddy/certs
 
 # Copy web files
 RUN mkdir -p /app/web/static /app/web/templates

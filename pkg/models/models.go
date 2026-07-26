@@ -70,20 +70,20 @@ type BackupCreateRequest struct {
 }
 
 type RestoreCreateRequest struct {
-	SnapshotID      string `json:"snapshot_id"`
-	ApplyDB         bool   `json:"apply_db"`
-	ApplyFiles      bool   `json:"apply_files"`
-	ApplyConfigs    bool   `json:"apply_configs"`
-	DeleteRemote    bool   `json:"delete_remote"`
-	ConfirmRestore  bool   `json:"confirm_restore"`
+	SnapshotID     string `json:"snapshot_id"`
+	ApplyDB        bool   `json:"apply_db"`
+	ApplyFiles     bool   `json:"apply_files"`
+	ApplyConfigs   bool   `json:"apply_configs"`
+	DeleteRemote   bool   `json:"delete_remote"`
+	ConfirmRestore bool   `json:"confirm_restore"`
 }
 
 type UpgradeCreateRequest struct {
-	AutoRollback      bool   `json:"auto_rollback"`
-	ForceUpgrade      bool   `json:"force_upgrade"`
-	SkipStaging       bool   `json:"skip_staging"`
-	HealthcheckURL    string `json:"healthcheck_url"`
-	HealthcheckCode   int    `json:"healthcheck_code"`
+	AutoRollback    bool   `json:"auto_rollback"`
+	ForceUpgrade    bool   `json:"force_upgrade"`
+	SkipStaging     bool   `json:"skip_staging"`
+	HealthcheckURL  string `json:"healthcheck_url"`
+	HealthcheckCode int    `json:"healthcheck_code"`
 }
 
 type HealthcheckRequest struct {
@@ -111,14 +111,14 @@ type APIResponse struct {
 }
 
 type UpgradeReport struct {
-	Timestamp     string `json:"timestamp"`
-	Host          string `json:"host"`
-	WPRoot        string `json:"wp_root"`
-	Snapshot      string `json:"snapshot"`
+	Timestamp      string `json:"timestamp"`
+	Host           string `json:"host"`
+	WPRoot         string `json:"wp_root"`
+	Snapshot       string `json:"snapshot"`
 	HealthcheckURL string `json:"healthcheck_url"`
-	Steps         []Step `json:"steps"`
-	FinalStatus   string `json:"final_status"`
-	FinalReason   string `json:"final_reason"`
+	Steps          []Step `json:"steps"`
+	FinalStatus    string `json:"final_status"`
+	FinalReason    string `json:"final_reason"`
 }
 
 type Step struct {

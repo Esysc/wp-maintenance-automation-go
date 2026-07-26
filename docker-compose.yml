@@ -29,7 +29,7 @@ services:
       - ./api/docs:/app/api/docs:ro
     environment:
       - WEB_PORT=8080
-      - API_URL=https://api:8081
+      - API_URL=http://api:8081
       - DATA_DIR=/app/data
       - LOG_LEVEL=info
       - DEBUG=false
@@ -48,15 +48,15 @@ services:
     volumes:
       - ./caddy_data:/data
       - ./caddy_config:/config
-      - ./Caddyfile:/etc/Caddyfile
+      - ./Caddyfile:/etc/caddy/Caddyfile
     environment:
-      - WP_MAINTENANCE_DOMAIN=${WP_MAINTENANCE_DOMAIN}
-      - WP_MAINTENANCE_API_DOMAIN=${WP_MAINTENANCE_API_DOMAIN:-}
+      - WP_MAINTENANCE_DOMAIN=${WP_MAINTENANCE_DOMAIN:-localhost}
+    depends_on:
+      - web
+      - api
     restart: unless-stopped
     networks:
       - wp-maintenance
-    profiles:
-      - caddy
 
   # Optional: MySQL/MariaDB for testing
   mysql:

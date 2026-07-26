@@ -167,7 +167,7 @@
         App.openModal('tokenCreatedModal');
     }
 
-    function closeCreatedTokenModal() { 
+    function closeCreatedTokenModal() {
         App.closeModal();
     }
 
@@ -182,14 +182,14 @@
         }
     }
 
-    function showCreateToken() { 
+    function showCreateToken() {
         App.openModal('createTokenModal');
     }
     function hideCreateToken() { App.closeModal(); }
 
     document.getElementById('tokenCreateForm').addEventListener('submit', async (e) => {
         e.preventDefault();
-        
+
         const resp = await fetch('/api/v1/tokens', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + App.getToken() },

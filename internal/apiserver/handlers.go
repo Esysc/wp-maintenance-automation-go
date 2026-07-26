@@ -11,6 +11,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 )
 
 type profileUser struct {
@@ -787,10 +788,10 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		SSHHost  string `json:"ssh_host"`
-		SSHPort  int    `json:"ssh_port"`
-		SSHUser  string `json:"ssh_user"`
-		WPRoot   string `json:"wp_root"`
+		SSHHost string `json:"ssh_host"`
+		SSHPort int    `json:"ssh_port"`
+		SSHUser string `json:"ssh_user"`
+		WPRoot  string `json:"wp_root"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -798,11 +799,8 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sshClient, err := ssh.NewClient(req.SSHHost, req.SSHPort, req.SSHUser, "")
-	if err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to connect via SSH")
-		return
-	}
+	sshOpts := ssh.NewSSHOptions(req.SSHHost, req.SSHUser, req.SSHPort)
+	sshClient := ssh.NewClient(sshOpts)
 
 	dbName, dbUser, dbPass, dbHost, err := sshClient.ParseDBConfig(req.WPRoot)
 	if err != nil {

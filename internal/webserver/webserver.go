@@ -38,7 +38,7 @@ func Run() {
 
 	apiURL := os.Getenv("API_URL")
 	if apiURL == "" {
-		apiURL = "https://localhost:8081"
+		apiURL = "http://localhost:8081"
 	}
 
 	staticDir := os.Getenv("STATIC_DIR")
@@ -113,35 +113,16 @@ func Run() {
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 
-	certFile := os.Getenv("WEB_TLS_CERT_FILE")
-	keyFile := os.Getenv("WEB_TLS_KEY_FILE")
 	tlsDisable := os.Getenv("WEB_TLS_DISABLE")
 
-	if certFile != "" && keyFile != "" {
-		log.Printf("Web server running on https://localhost:%s", port)
-		if err := http.ListenAndServeTLS(":"+port, certFile, keyFile, mux); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	} else if tlsDisable == "true" {
+	if tlsDisable == "true" {
 		log.Printf("Web server running on http://localhost:%s", port)
 		if err := http.ListenAndServe(":"+port, mux); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	} else {
-		cert, err := generateSelfSignedCert()
-		if err != nil {
-			log.Fatalf("Failed to generate self-signed cert: %v", err)
-		}
-		server := &http.Server{
-			Addr:    ":" + port,
-			Handler: mux,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{*cert},
-			},
-		}
-		log.Printf("Web server running on https://localhost:%s (self-signed cert)", port)
-		log.Printf("Connecting to API at %s", apiURL)
-		if err := server.ListenAndServeTLS("", ""); err != nil {
+		log.Printf("Web server running on http://localhost:%s", port)
+		if err := http.ListenAndServe(":"+port, mux); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	}

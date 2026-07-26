@@ -102,14 +102,14 @@ func (c *Checker) checkOnce(ctx context.Context, opts *DefaultOptions) (map[stri
 	passed := resp.StatusCode == opts.ExpectedCode
 
 	return map[string]interface{}{
-		"url":            opts.URL,
-		"status_code":    resp.StatusCode,
-		"expected_code":  opts.ExpectedCode,
-		"passed":         passed,
-		"attempt":        1,
-		"max_attempts":   opts.MaxRetries,
+		"url":              opts.URL,
+		"status_code":      resp.StatusCode,
+		"expected_code":    opts.ExpectedCode,
+		"passed":           passed,
+		"attempt":          1,
+		"max_attempts":     opts.MaxRetries,
 		"response_time_ms": responseTime,
-		"error_message":  "",
+		"error_message":    "",
 	}, nil
 }
 

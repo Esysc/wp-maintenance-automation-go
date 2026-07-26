@@ -232,5 +232,6 @@
   "upgrade_pipeline_summary": "전체 업그레이드 파이프라인을 실행합니다: 백업 -> 검증 -> 업그레이드 -> 상태 확인 -> 실패 시 롤백.",
   "upgrade_progress": "진행 상황",
   "upgrade_started": "업그레이드가 시작되었습니다",
-  "value_ok": "정상"
+  "value_ok": "정상",
+  "no_sites_configured": "No sites configured yet. Click Add Site to get started."
 }

@@ -232,5 +232,6 @@
   "upgrade_pipeline_summary": "这将运行完整的升级流程：备份 -> 验证 -> 升级 -> 健康检查 -> 失败时回滚。",
   "upgrade_progress": "进度",
   "upgrade_started": "升级已启动",
-  "value_ok": "正常"
+  "value_ok": "正常",
+  "no_sites_configured": "No sites configured yet. Click Add Site to get started."
 }

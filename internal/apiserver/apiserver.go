@@ -24,10 +24,10 @@ import (
 )
 
 type APIServer struct {
-	Auth     *auth.AuthManager
-	Database *db.Database
-	Checker  *healthcheck.Checker
-	Restic   *restic.ResticClient
+	Auth      *auth.AuthManager
+	Database  *db.Database
+	Checker   *healthcheck.Checker
+	Restic    *restic.ResticClient
 	SSHClient *ssh.Client
 }
 
@@ -110,34 +110,16 @@ func Run() {
 
 	handler := corsMiddleware(mux)
 
-	certFile := os.Getenv("TLS_CERT_FILE")
-	keyFile := os.Getenv("TLS_KEY_FILE")
 	tlsDisable := os.Getenv("TLS_DISABLE")
 
-	if certFile != "" && keyFile != "" {
-		log.Printf("API server running on https://localhost:%s", port)
-		if err := http.ListenAndServeTLS(":"+port, certFile, keyFile, handler); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	} else if tlsDisable == "true" {
+	if tlsDisable == "true" {
 		log.Printf("API server running on http://localhost:%s", port)
 		if err := http.ListenAndServe(":"+port, handler); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	} else {
-		cert, err := generateSelfSignedCert()
-		if err != nil {
-			log.Fatalf("Failed to generate self-signed cert: %v", err)
-		}
-		server := &http.Server{
-			Addr:    ":" + port,
-			Handler: handler,
-			TLSConfig: &tls.Config{
-				Certificates: []tls.Certificate{*cert},
-			},
-		}
-		log.Printf("API server running on https://localhost:%s (self-signed cert)", port)
-		if err := server.ListenAndServeTLS("", ""); err != nil {
+		log.Printf("API server running on http://localhost:%s", port)
+		if err := http.ListenAndServe(":"+port, handler); err != nil {
 			log.Fatalf("Server error: %v", err)
 		}
 	}

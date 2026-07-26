@@ -77,14 +77,15 @@
         if (result && result.success && result.data) {
             const tbody = document.getElementById('backupsBody');
             tbody.innerHTML = '';
-            result.data.forEach(b => {
+            const items = Array.isArray(result.data) ? result.data : [];
+            items.forEach(b => {
                 tbody.innerHTML += `<tr>
                     <td>${b.timestamp || '-'}</td>
                     <td>${b.host || b.ssh_host || '-'}</td>
                     <td>${b.wp_version || '-'}</td>
                     <td>${b.db_name || '-'}</td>
                     <td>${b.file_count || 0}</td>
-                    <td><button onclick="deleteBackup('${b.timestamp}')" class="btn btn-danger btn-sm">${App.t('btn_delete')}</button></td>
+                    <td><button onclick="deleteBackup('${App.escapeHTML(String(b.timestamp || ''))}')" class="btn btn-danger btn-sm">${App.t('btn_delete')}</button></td>
                 </tr>`;
             });
             App.reveal();

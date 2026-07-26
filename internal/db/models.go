@@ -110,7 +110,7 @@ func (db *Database) ListSites() ([]*Site, error) {
 	}
 	defer rows.Close()
 
-	var sites []*Site
+	sites := []*Site{}
 	for rows.Next() {
 		site := &Site{}
 		err := rows.Scan(
@@ -185,7 +185,7 @@ func (db *Database) GetBackupsBySite(siteID string) ([]*Backup, error) {
 	}
 	defer rows.Close()
 
-	var backups []*Backup
+	backups := []*Backup{}
 	for rows.Next() {
 		backup := &Backup{}
 		err := rows.Scan(
@@ -298,7 +298,7 @@ func (db *Database) ListUsers() ([]DBUser, error) {
 	}
 	defer rows.Close()
 
-	var users []DBUser
+	users := []DBUser{}
 	for rows.Next() {
 		user := DBUser{}
 		err := rows.Scan(
@@ -362,7 +362,7 @@ func (db *Database) ListTokens() ([]*DBToken, error) {
 	}
 	defer rows.Close()
 
-	var tokens []*DBToken
+	tokens := []*DBToken{}
 	for rows.Next() {
 		token := &DBToken{}
 		var expiresAt, lastUsed sql.NullString

@@ -3,20 +3,20 @@ info:
   title: WP Maintenance Automation API
   description: |
     RESTful API for WordPress site maintenance automation including backups, upgrades, restores, and health checks.
-    
+
     ## Authentication
     All endpoints except `/api/v1/health` and `/api/v1/auth/login` require authentication via Bearer token in the `Authorization` header:
     ```
     Authorization: Bearer <token>
     ```
-    
+
     ## First Login
     At first use, call `/api/v1/auth/login` with a password that meets the requirements:
     - Minimum 8 characters
     - At least one uppercase letter
     - At least one lowercase letter
     - At least one digit
-    
+
     This will create the internal admin user and return a 24-hour valid token.
   version: 1.0.0
   contact:

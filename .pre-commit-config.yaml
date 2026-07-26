@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-symlinks
+
+  - repo: local
+    hooks:
+      - id: go-fmt
+        name: Go format check
+        entry: bash -c 'go fmt ./... >/dev/null 2>&1'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-build
+        name: Go build check
+        entry: bash -c 'go build -o /dev/null ./... >/dev/null 2>&1'
+        language: system
+        types: [go]
+        pass_filenames: false

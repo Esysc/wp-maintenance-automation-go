@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="page_title_users" data-i18n-prefix="WP Maintenance Automation - ">{{.Title}} - Users</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>WP Maintenance</h2>
+        </div>
+        <ul class="nav-list">
+            <li><a href="/dashboard" class="{{if eq .ActivePage "dashboard"}}active{{end}}" data-i18n="nav_dashboard">Dashboard</a></li>
+            <li><a href="/sites" class="{{if eq .ActivePage "sites"}}active{{end}}" data-i18n="nav_sites">Sites</a></li>
+            <li><a href="/backups" class="{{if eq .ActivePage "backups"}}active{{end}}" data-i18n="nav_backups">Backups</a></li>
+            <li><a href="/restore" class="{{if eq .ActivePage "restore"}}active{{end}}" data-i18n="nav_restore">Restore</a></li>
+            <li><a href="/upgrade" class="{{if eq .ActivePage "upgrade"}}active{{end}}" data-i18n="nav_upgrade">Upgrade</a></li>
+            <li><a href="/snapshots" class="{{if eq .ActivePage "snapshots"}}active{{end}}" data-i18n="nav_snapshots">Snapshots</a></li>
+            <li><a href="/healthcheck" class="{{if eq .ActivePage "healthcheck"}}active{{end}}" data-i18n="nav_healthcheck">Health Checks</a></li>
+            <li><a href="/users" class="{{if eq .ActivePage "users"}}active{{end}}" data-i18n="nav_users">Users</a></li>
+            <li><a href="/tokens" class="{{if eq .ActivePage "tokens"}}active{{end}}" data-i18n="nav_tokens">API Tokens</a></li>
+            <li><a href="/system" class="{{if eq .ActivePage "system"}}active{{end}}" data-i18n="nav_system">System</a></li>
+            <li><a href="/api/docs" class="{{if eq .ActivePage "docs"}}active{{end}}" data-i18n="nav_docs">Documentation</a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <a href="/login" onclick="document.cookie='token=; Max-Age=0; path=/'; return true;" data-i18n="nav_logout">Logout</a>
+        </div>
+    </nav>
+    <main class="main-content">
+        <header class="page-header"><h1 data-i18n="page_title_users">Profile</h1></header>
+        <div class="card">
+            <div class="language-selector" style="margin-bottom: 20px;">
+                <label for="profileLanguage" data-language-label>Language</label>
+                <select id="profileLanguage" data-language-selector></select>
+            </div>
+            <form id="profileForm">
+                <div class="field-floating"><input type="text" id="profileUsername" placeholder=" " readonly><label data-i18n="profile_internal_username">Internal Username</label></div>
+                <div class="field-floating"><input type="text" id="profileDisplayName" placeholder=" " required><label data-i18n="form_profile_display_name">Display Name</label></div>
+                <div class="field-floating">
+                    <select id="profileIcon">
+                        <option value="user" data-i18n="icon_user">User</option>
+                        <option value="shield" data-i18n="icon_shield">Shield</option>
+                        <option value="bolt" data-i18n="icon_bolt">Bolt</option>
+                        <option value="globe" data-i18n="icon_globe">Globe</option>
+                        <option value="gear" data-i18n="icon_gear">Gear</option>
+                    </select>
+                    <label data-i18n="form_profile_icon">Profile Icon</label>
+                </div>
+                <div id="profilePreview" class="entity-card"></div>
+                <div class="entity-meta" id="profileCreatedAt"></div>
+                <div class="entity-meta" id="profileUpdatedAt"></div>
+                <div class="entity-meta" id="profileInternalAccountHelp" data-i18n="profile_internal_account_help">The internal account powers the web session and all API tokens. It cannot be deleted.</div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary" data-i18n="btn_save_changes">Save Profile</button>
+                </div>
+            </form>
+        </div>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+    const profileIcons = {
+        user: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4.4 0-8 2-8 4.5V21h16v-2.5C20 16 16.4 14 12 14z"></path></svg>',
+        shield: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l7 3v6c0 5-3.4 9.7-7 11-3.6-1.3-7-6-7-11V5l7-3z"></path></svg>',
+        bolt: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L5 14h5l-1 8 8-12h-5l1-8z"></path></svg>',
+        globe: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a10 10 0 100 20 10 10 0 000-20zm6.9 9h-3.1a15.7 15.7 0 00-1.1-5A8.1 8.1 0 0118.9 11zM12 4.1c1 1.2 1.9 3.5 2.2 6.9H9.8C10.1 7.6 11 5.3 12 4.1zM4.1 13h3.1a15.7 15.7 0 001.1 5A8.1 8.1 0 014.1 13zm3.1-2H4.1a8.1 8.1 0 014.2-5 15.7 15.7 0 00-1.1 5zm4.8 8.9c-1-1.2-1.9-3.5-2.2-6.9h4.4c-.3 3.4-1.2 5.7-2.2 6.9zM9.8 11c.3-3.4 1.2-5.7 2.2-6.9 1 1.2 1.9 3.5 2.2 6.9H9.8zm4.9 7a15.7 15.7 0 001.1-5h3.1a8.1 8.1 0 01-4.2 5z"></path></svg>',
+        gear: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.7 7.7 0 000-2l2.1-1.6-2-3.5-2.5 1a7.2 7.2 0 00-1.7-1l-.4-2.7H9.1L8.7 6a7.2 7.2 0 00-1.7 1l-2.5-1-2 3.5L4.6 11a7.7 7.7 0 000 2l-2.1 1.6 2 3.5 2.5-1a7.2 7.2 0 001.7 1l.4 2.7h5.8l.4-2.7a7.2 7.2 0 001.7-1l2.5 1 2-3.5-2.1-1.6zM12 15.5a3.5 3.5 0 110-7 3.5 3.5 0 010 7z"></path></svg>'
+    };
+
+    let currentProfile = null;
+
+    function renderProfilePreview() {
+        const displayName = document.getElementById('profileDisplayName').value || App.t('profile_internal_username');
+        const icon = document.getElementById('profileIcon').value || 'user';
+        document.getElementById('profilePreview').innerHTML = `
+            <div class="entity-title" style="display:flex;align-items:center;gap:12px;">
+                <span class="nav-icon">${profileIcons[icon] || profileIcons.user}</span>
+                <span>${App.escapeHTML(displayName)}</span>
+            </div>
+            <div class="entity-meta">${App.t('profile_visible_name_help')}</div>
+        `;
+    }
+
+    function renderProfileMeta(profile) {
+        if (!profile) return;
+        document.getElementById('profileUsername').value = profile.username || 'internal';
+        document.getElementById('profileDisplayName').value = profile.display_name || profile.username || '';
+        document.getElementById('profileIcon').value = profile.icon || 'user';
+        document.getElementById('profileCreatedAt').textContent = profile.created_at ? App.t('label_created') + ': ' + new Date(profile.created_at).toLocaleString() : '';
+        document.getElementById('profileUpdatedAt').textContent = profile.updated_at ? App.t('label_updated') + ': ' + new Date(profile.updated_at).toLocaleString() : '';
+        renderProfilePreview();
+    }
+
+    async function loadProfile() {
+        App.setLoading('profilePreview', true, 'cards');
+        const resp = await fetch('/api/v1/users', { headers: { 'Authorization': 'Bearer ' + App.getToken() } });
+        const result = await resp.json();
+        if (result.success && result.data) {
+            currentProfile = result.data;
+            renderProfileMeta(currentProfile);
+            App.reveal();
+        } else {
+            App.toast(App.t('error_profile_failed_load'), 'error');
+        }
+        App.setLoading('profilePreview', false, 'cards');
+    }
+
+    document.getElementById('profileForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const resp = await fetch('/api/v1/users', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + App.getToken() },
+            body: JSON.stringify({
+                display_name: document.getElementById('profileDisplayName').value,
+                icon: document.getElementById('profileIcon').value
+            })
+        });
+        const result = await resp.json();
+        if (resp.ok) {
+            App.toast(App.t('profile_updated'), 'success');
+            if (result.success && result.data) {
+                currentProfile = result.data;
+                renderProfileMeta(currentProfile);
+            }
+        } else {
+            App.toast((result && result.error) || App.t('error_profile_failed_update'), 'error');
+        }
+    });
+
+    document.getElementById('profileDisplayName').addEventListener('input', renderProfilePreview);
+    document.getElementById('profileIcon').addEventListener('change', renderProfilePreview);
+    document.addEventListener('app:languagechange', () => {
+        if (currentProfile) {
+            renderProfileMeta(currentProfile);
+        }
+    });
+
+    loadProfile();
+    </script>
+</body>
+</html>

@@ -1,0 +1,123 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./backup_artifacts:/app/backup_artifacts
+      - ./restore:/app/restore
+    environment:
+      - API_PORT=8081
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=info
+      - DEBUG=false
+    restart: unless-stopped
+    networks:
+      - wp-maintenance
+
+  web:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./web/templates:/app/web/templates:ro
+      - ./web/static:/app/web/static:ro
+      - ./api/docs:/app/api/docs:ro
+    environment:
+      - WEB_PORT=8080
+      - API_URL=https://api:8081
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=info
+      - DEBUG=false
+    command: ["./web-server"]
+    depends_on:
+      - api
+    restart: unless-stopped
+    networks:
+      - wp-maintenance
+
+  caddy:
+    image: caddy:latest
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy_data:/data
+      - ./caddy_config:/config
+      - ./Caddyfile:/etc/Caddyfile
+    environment:
+      - WP_MAINTENANCE_DOMAIN=${WP_MAINTENANCE_DOMAIN}
+      - WP_MAINTENANCE_API_DOMAIN=${WP_MAINTENANCE_API_DOMAIN:-}
+    restart: unless-stopped
+    networks:
+      - wp-maintenance
+    profiles:
+      - caddy
+
+  # Optional: MySQL/MariaDB for testing
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=wordpress
+      - MYSQL_USER=wordpress
+      - MYSQL_PASSWORD=wordpress
+    volumes:
+      - mysql_data:/var/lib/mysql
+    networks:
+      - wp-maintenance
+    profiles:
+      - test
+
+  # Optional: WordPress for testing
+  wordpress:
+    image: wordpress:latest
+    ports:
+      - "8082:80"
+    environment:
+      - WORDPRESS_DB_HOST=mysql:3306
+      - WORDPRESS_DB_NAME=wordpress
+      - WORDPRESS_DB_USER=wordpress
+      - WORDPRESS_DB_PASSWORD=wordpress
+    volumes:
+      - wordpress_data:/var/www/html
+    depends_on:
+      - mysql
+    networks:
+      - wp-maintenance
+    profiles:
+      - test
+
+  # Optional: Restic for backup storage
+  restic:
+    image: restic/restic:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - restic_data:/data
+      - ./restic_config:/config
+    environment:
+      - RESTIC_REPOSITORY=/data
+      - RESTIC_PASSWORD_FILE=/config/password
+    networks:
+      - wp-maintenance
+    profiles:
+      - backup
+
+volumes:
+  mysql_data:
+    driver: local
+  wordpress_data:
+    driver: local
+  restic_data:
+    driver: local
+
+networks:
+  wp-maintenance:
+    driver: bridge

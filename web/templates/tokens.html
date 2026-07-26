@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="page_title_tokens" data-i18n-prefix="WP Maintenance Automation - ">{{.Title}} - API Tokens</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>WP Maintenance</h2>
+        </div>
+        <ul class="nav-list">
+            <li><a href="/dashboard" class="{{if eq .ActivePage "dashboard"}}active{{end}}" data-i18n="nav_dashboard">Dashboard</a></li>
+            <li><a href="/sites" class="{{if eq .ActivePage "sites"}}active{{end}}" data-i18n="nav_sites">Sites</a></li>
+            <li><a href="/backups" class="{{if eq .ActivePage "backups"}}active{{end}}" data-i18n="nav_backups">Backups</a></li>
+            <li><a href="/restore" class="{{if eq .ActivePage "restore"}}active{{end}}" data-i18n="nav_restore">Restore</a></li>
+            <li><a href="/upgrade" class="{{if eq .ActivePage "upgrade"}}active{{end}}" data-i18n="nav_upgrade">Upgrade</a></li>
+            <li><a href="/snapshots" class="{{if eq .ActivePage "snapshots"}}active{{end}}" data-i18n="nav_snapshots">Snapshots</a></li>
+            <li><a href="/healthcheck" class="{{if eq .ActivePage "healthcheck"}}active{{end}}" data-i18n="nav_healthcheck">Health Checks</a></li>
+            <li><a href="/users" class="{{if eq .ActivePage "users"}}active{{end}}" data-i18n="nav_users">Users</a></li>
+            <li><a href="/tokens" class="{{if eq .ActivePage "tokens"}}active{{end}}" data-i18n="nav_tokens">API Tokens</a></li>
+            <li><a href="/system" class="{{if eq .ActivePage "system"}}active{{end}}" data-i18n="nav_system">System</a></li>
+            <li><a href="/api/docs" class="{{if eq .ActivePage "docs"}}active{{end}}" data-i18n="nav_docs">Documentation</a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <a href="/login" onclick="document.cookie='token=; Max-Age=0; path=/'; return true;" data-i18n="nav_logout">Logout</a>
+        </div>
+    </nav>
+    <main class="main-content">
+        <header class="page-header"><h1 data-i18n="page_title_tokens">API Tokens</h1><button class="btn btn-primary" onclick="showCreateToken()" data-i18n="btn_create_token">Create Token</button></header>
+        <div class="card">
+            <div id="tokensBody" class="list-grid"></div>
+        </div>
+    </main>
+
+    <div id="createTokenModal" class="modal" style="display:none;" aria-hidden="true">
+        <button class="modal-backdrop" data-close-modal="createTokenModal"></button>
+        <div class="modal-dialog modal-sm">
+            <div class="modal-header">
+                <h3 data-i18n="modal_create_token">Create Token</h3>
+                <button type="button" class="icon-btn" data-close-modal="createTokenModal">x</button>
+            </div>
+            <div class="modal-body">
+                <form id="tokenCreateForm">
+                    <div class="field-floating"><input type="text" id="tokenName" placeholder=" " required><label data-i18n="form_token_name">Token Name</label></div>
+                    <div class="field-floating"><input type="number" id="tokenDuration" placeholder=" " value="720"><label data-i18n="form_token_duration">Duration (hours, 0 = no expiry)</label></div>
+                    <div class="modal-actions">
+                        <button type="button" class="btn" onclick="hideCreateToken()" data-i18n="btn_cancel">Cancel</button>
+                        <button type="submit" class="btn btn-primary" data-i18n="btn_create_token">Create Token</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="tokenCreatedModal" class="modal" style="display:none;" aria-hidden="true">
+        <button class="modal-backdrop" data-close-modal="tokenCreatedModal"></button>
+        <div class="modal-dialog modal-sm">
+            <div class="modal-header">
+                <h3 data-i18n="token_created_title">Token Created</h3>
+                <button type="button" class="icon-btn" data-close-modal="tokenCreatedModal">x</button>
+            </div>
+            <div class="modal-body">
+                <p data-i18n="token_created_warning">Copy the token now. It will not be shown again.</p>
+                <div class="field-floating">
+                    <input type="text" id="createdTokenValue" readonly placeholder=" ">
+                    <label data-i18n="token_value">Token Value</label>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn" onclick="copyCreatedToken()" data-i18n="btn_copy_token">Copy Token</button>
+                    <button type="button" class="btn btn-primary" onclick="closeCreatedTokenModal()" data-i18n="btn_close">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+    <script>
+    let latestGeneratedToken = '';
+    let currentSessionTokenId = '';
+
+    async function loadTokens() {
+        App.setLoading('tokensBody', true, 'cards');
+        const resp = await fetch('/api/v1/tokens', { headers: { 'Authorization': 'Bearer ' + App.getToken() } });
+        if (resp.status === 401) {
+            document.cookie = 'token=; Max-Age=0; path=/';
+            window.location.href = '/login';
+            return;
+        }
+        const result = await resp.json();
+        if (result.success && result.data) {
+            const list = document.getElementById('tokensBody');
+            list.innerHTML = '';
+            const tokens = Array.isArray(result.data) ? result.data : [];
+            currentSessionTokenId = '';
+            tokens.forEach((t) => {
+                const isRevoked = t.revoked === true;
+                const isCurrentSessionToken = t.current_session === true;
+                if (isCurrentSessionToken) currentSessionTokenId = t.id || '';
+                if (!isRevoked) {
+                    const name = t.name || App.t('token_unnamed');
+                    const created = t.created_at ? new Date(t.created_at).toLocaleString() : '-';
+                    const expires = t.expires_at ? new Date(t.expires_at).toLocaleString() : App.t('token_never');
+                    const expiryBadge = expires === App.t('token_never')
+                        ? '<span class="badge badge-success">' + App.escapeHTML(App.t('token_no_expiry')) + '</span>'
+                        : '<span class="badge badge-muted">' + App.escapeHTML(App.t('token_expiring')) + '</span>';
+
+                    list.innerHTML += `<article class="entity-card">
+                        <div class="entity-title">${App.escapeHTML(name)}</div>
+                        <div class="entity-meta">${App.t('token_owner')}: ${App.escapeHTML(t.owner_display_name || t.owner_name || App.t('profile_internal_username'))}</div>
+                        <div class="entity-meta">${App.t('label_created')}: ${App.escapeHTML(created)}</div>
+                        <div class="entity-meta">${App.t('token_expires')}: ${App.escapeHTML(expires)} ${expiryBadge}</div>
+                        <div class="entity-actions">
+                            <button onclick="copyTokenId('${App.escapeHTML(t.id || '')}')" class="btn btn-sm">${App.t('btn_copy_id')}</button>
+                            ${isCurrentSessionToken
+                                ? ''
+                                : `<button onclick="revokeToken('${App.escapeHTML(t.id || '')}')" class="btn btn-danger btn-sm">${App.t('btn_revoke')}</button>`}
+                        </div>
+                    </article>`;
+                }
+            });
+
+            if (!list.innerHTML.trim()) {
+                list.innerHTML = '<article class="entity-card"><div class="entity-title">' + App.t('token_no_active') + '</div><div class="entity-meta">' + App.t('token_create_external_access') + '</div></article>';
+            }
+            App.reveal();
+        }
+        App.setLoading('tokensBody', false, 'cards');
+    }
+
+    async function revokeToken(id) {
+        if (!(await App.confirm(App.t('modal_revoke_confirmation'), App.t('modal_revoke_token')))) return;
+        const token = App.getToken();
+        const resp = await fetch('/api/v1/tokens/' + id, { method: 'DELETE', headers: { 'Authorization': 'Bearer ' + token } });
+        if (resp.status === 401) {
+            document.cookie = 'token=; Max-Age=0; path=/';
+            window.location.href = '/login';
+            return;
+        }
+        const result = await resp.json();
+        if (result.success) {
+            App.toast(App.t('token_revoked'), 'success');
+            if (currentSessionTokenId && id === currentSessionTokenId) {
+                document.cookie = 'token=; Max-Age=0; path=/';
+                window.location.href = '/login';
+                return;
+            }
+            loadTokens();
+        } else {
+            App.toast((result.error || App.t('token_failed_revoke')), 'error');
+        }
+    }
+
+    async function copyTokenId(id) {
+        try {
+            await App.copyText(id);
+            App.toast(App.t('token_id_copied'), 'success');
+        } catch (e) {
+            App.toast(App.t('error_copy_failed'), 'error');
+        }
+    }
+
+    function showCreatedTokenModal(token) {
+        document.getElementById('createdTokenValue').value = token;
+        App.openModal('tokenCreatedModal');
+    }
+
+    function closeCreatedTokenModal() { 
+        App.closeModal();
+    }
+
+    async function copyCreatedToken() {
+        const token = document.getElementById('createdTokenValue').value;
+        if (!token) return;
+        try {
+            await App.copyText(token);
+            App.toast(App.t('token_copied'), 'success');
+        } catch (e) {
+            App.toast(App.t('token_copy_failed'), 'error');
+        }
+    }
+
+    function showCreateToken() { 
+        App.openModal('createTokenModal');
+    }
+    function hideCreateToken() { App.closeModal(); }
+
+    document.getElementById('tokenCreateForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        
+        const resp = await fetch('/api/v1/tokens', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + App.getToken() },
+            body: JSON.stringify({
+                name: document.getElementById('tokenName').value,
+                duration: parseInt(document.getElementById('tokenDuration').value) || 0
+            })
+        });
+        const result = await resp.json();
+        if (result.success && result.data && result.data.token) {
+            latestGeneratedToken = result.data.token;
+            showCreatedTokenModal(latestGeneratedToken);
+        } else {
+            App.toast((result.error || App.t('error_create_token_failed')), 'error');
+            hideCreateToken();
+        }
+    });
+    loadTokens();
+    </script>
+</body>
+</html>

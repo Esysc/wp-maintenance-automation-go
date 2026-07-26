@@ -1,0 +1,96 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+coverage.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.tar.gz
+*.zip
+*.tar
+
+# Backup artifacts
+backup_artifacts/
+
+# Restore artifacts
+restore/
+
+# Data directories
+data/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Restic backup files
+*.snap
+
+# SSH keys
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+known_hosts
+
+# Database dumps
+*.sql
+*.sql.gz
+*.sql.bz2
+
+# Config files
+config.json
+config.yaml
+config.yml
+
+# Logs
+*.log
+
+# Temporary and cache
+.cache/
+
+# Backup reports
+var/reports/
+
+# Restic cache
+restic_cache/
+
+# Node.js
+node_modules/
+
+# Test results
+test-results/
+__test__/
+__tests__/

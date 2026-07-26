@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WP Maintenance Automation - API Documentation</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@4/swagger-ui-bundle.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@4/swagger-ui-standalone-preset.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@4/swagger-ui.css">
+    <style>
+        /* Fix Swagger UI contrast issues */
+        .swagger-ui .opblock-summary-description,
+        .swagger-ui .opblock-description-wrapper p,
+        .swagger-ui .opblock-section-header h4,
+        .swagger-ui .model-title,
+        .swagger-ui .model {
+            color: #333333 !important;
+        }
+        .swagger-ui .opblock-summary-description {
+            background-color: #f8f9fa !important;
+        }
+        .swagger-ui .prop-format {
+            color: #666666 !important;
+        }
+        .swagger-ui .models .model-container {
+            background-color: #f8f9fa !important;
+        }
+        .swagger-ui .models .model-container .model-box {
+            background-color: #ffffff !important;
+        }
+        .swagger-ui .try-out__btn {
+            background-color: #007bff !important;
+            color: #ffffff !important;
+        }
+        .swagger-ui .execute {
+            background-color: #28a745 !important;
+            color: #ffffff !important;
+        }
+        .swagger-ui .btn.execute {
+            background-color: #28a745 !important;
+            color: #ffffff !important;
+        }
+        .swagger-ui .response-col_status {
+            color: #333333 !important;
+        }
+        .swagger-ui .response-col_description__inner {
+            color: #333333 !important;
+        }
+        .swagger-ui .highlight-code {
+            background-color: #f8f9fa !important;
+        }
+        .swagger-ui .highlight-code pre {
+            background-color: #f8f9fa !important;
+            color: #333333 !important;
+        }
+        .swagger-ui .scheme-container {
+            background-color: #ffffff !important;
+        }
+        .swagger-ui .opblock-tag-section {
+            background-color: #ffffff !important;
+        }
+    </style>
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>WP Maintenance</h2>
+        </div>
+        <ul class="nav-list">
+            <li><a href="/dashboard">Dashboard</a></li>
+            <li><a href="/backups">Backups</a></li>
+            <li><a href="/restore">Restore</a></li>
+            <li><a href="/upgrade">Upgrade</a></li>
+            <li><a href="/snapshots">Snapshots</a></li>
+            <li><a href="/healthcheck">Health Checks</a></li>
+            <li><a href="/users">Users</a></li>
+            <li><a href="/tokens">API Tokens</a></li>
+            <li><a href="/system">System</a></li>
+            <li><a href="/api/docs" class="active">Documentation</a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <a href="/login" onclick="document.cookie='token=; Max-Age=0; path=/'; return true;">Logout</a>
+        </div>
+    </nav>
+    <main class="main-content">
+        <header class="page-header"><h1>API Documentation</h1></header>
+        <div class="card">
+            <h2>OpenAPI Specification</h2>
+            <p>View the interactive API documentation below or download the <a href="/api/docs/openapi.yaml" download>OpenAPI YAML file</a>.</p>
+        </div>
+        <div id="swagger-ui"></div>
+    </main>
+    <script>
+        window.onload = function() {
+            SwaggerUIBundle({
+                url: "/api/docs/openapi.yaml",
+                dom_id: '#swagger-ui',
+                deepLinking: true,
+                presets: [
+                    SwaggerUIBundle.presets.apis,
+                    SwaggerUIStandalonePreset
+                ],
+                layout: "StandaloneLayout",
+                docExpansion: "list",
+                defaultModelRendering: "model",
+                showRequestHeaders: true,
+                showOperationIds: false
+            });
+        };
+    </script>
+</body>
+</html>

@@ -121,6 +121,21 @@ func initSchema(db *sql.DB) error {
 
 	CREATE INDEX IF NOT EXISTS idx_backups_site_id ON backups(site_id);
 	CREATE INDEX IF NOT EXISTS idx_backups_timestamp ON backups(timestamp);
+
+	CREATE TABLE IF NOT EXISTS jobs (
+		id TEXT PRIMARY KEY,
+		type TEXT NOT NULL,
+		site_id TEXT NOT NULL,
+		status TEXT NOT NULL DEFAULT 'queued',
+		progress TEXT NOT NULL DEFAULT '',
+		result TEXT NOT NULL DEFAULT '',
+		error TEXT NOT NULL DEFAULT '',
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_jobs_site_id ON jobs(site_id);
+	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	`
 
 	_, err := db.Exec(schema)

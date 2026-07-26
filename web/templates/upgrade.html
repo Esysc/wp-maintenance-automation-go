@@ -63,6 +63,28 @@
     </main>
     <script src="/static/js/app.js"></script>
     <script>
+    async function pollJob(jobId, el) {
+        const poll = async () => {
+            const r = await fetch('/api/v1/jobs/' + jobId, {
+                headers: { 'Authorization': 'Bearer ' + App.getToken() }
+            });
+            const j = await r.json();
+            if (j.success && j.data) {
+                el.textContent = '[' + j.data.status + '] ' + (j.data.progress || '');
+                if (j.data.status === 'completed') {
+                    el.className = 'result-box success';
+                    return;
+                } else if (j.data.status === 'failed') {
+                    el.textContent = j.data.error || 'Job failed';
+                    el.className = 'result-box error';
+                    return;
+                }
+                setTimeout(poll, 2000);
+            }
+        };
+        setTimeout(poll, 1000);
+    }
+
     document.getElementById('upgradeForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const siteId = document.getElementById('siteSelector').value;
@@ -87,9 +109,16 @@
         const result = await resp.json();
         const el = document.getElementById('upgradeResult');
         el.style.display = 'block';
-        el.textContent = result.message || App.t('upgrade_initiated');
-        el.className = 'result-box ' + (resp.ok ? 'success' : 'error');
-        App.toast(resp.ok ? App.t('upgrade_started') : App.t('upgrade_failed_start'), resp.ok ? 'success' : 'error');
+        if (resp.ok && result.success && result.data && result.data.job_id) {
+            el.textContent = App.t('upgrade_queued') || 'Upgrade queued, waiting for completion...';
+            el.className = 'result-box info';
+            App.toast(App.t('upgrade_started'), 'info');
+            pollJob(result.data.job_id, el);
+        } else {
+            el.textContent = result.error || result.data && result.data.message || App.t('upgrade_failed');
+            el.className = 'result-box ' + (resp.ok ? 'success' : 'error');
+            App.toast(resp.ok ? App.t('upgrade_started') : App.t('upgrade_failed_start'), resp.ok ? 'success' : 'error');
+        }
     });
 
     loadSitesForSelector('siteSelector');

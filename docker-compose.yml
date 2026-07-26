@@ -9,6 +9,8 @@ services:
       - LOG_LEVEL=info
       - DEBUG=false
       - SSH_AUTH_SOCK=/ssh-agent.sock
+      - RESTIC_PASSWORD_FILE=/app/data/restic_password
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
@@ -37,6 +39,8 @@ services:
       - DATA_DIR=/app/data
       - LOG_LEVEL=info
       - DEBUG=false
+      - RESTIC_PASSWORD_FILE=/app/data/restic_password
+      - RESTIC_PASSWORD=${RESTIC_PASSWORD}
     command: ["./web-server"]
     depends_on:
       - api

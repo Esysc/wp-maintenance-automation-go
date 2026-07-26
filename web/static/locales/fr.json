@@ -91,7 +91,6 @@
   "form_password": "Mot de passe",
   "form_profile_display_name": "Nom d'affichage",
   "form_profile_icon": "Icône de profil",
-  "form_restic_pass_file": "Fichier de mot de passe Restic",
   "form_restic_repo": "Dépôt Restic",
   "form_local_restic": "Utiliser stockage local (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "Drapeaux de rétention",

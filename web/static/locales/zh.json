@@ -91,7 +91,6 @@
   "form_password": "密码",
   "form_profile_display_name": "显示名称",
   "form_profile_icon": "个人资料图标",
-  "form_restic_pass_file": "Restic密码文件",
   "form_restic_repo": "Restic仓库",
   "form_local_restic": "使用本地存储 (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "保留标志",

@@ -226,6 +226,65 @@ type Backup struct {
 	CreatedAt  string `json:"created_at"`
 }
 
+type Job struct {
+	ID        string    `json:"id"`
+	Type      string    `json:"type"`
+	SiteID    string    `json:"site_id"`
+	Status    string    `json:"status"`
+	Progress  string    `json:"progress"`
+	Result    string    `json:"result"`
+	Error     string    `json:"error"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (db *Database) CreateJob(job *Job) error {
+	query := `
+		INSERT INTO jobs (id, type, site_id, status, progress, result, error, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err := db.Exec(query, job.ID, job.Type, job.SiteID, job.Status, job.Progress, job.Result, job.Error, time.Now(), time.Now())
+	return err
+}
+
+func (db *Database) GetJob(id string) (*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, result, error, created_at, updated_at FROM jobs WHERE id = ?`
+	job := &Job{}
+	err := db.QueryRow(query, id).Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("job not found")
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (db *Database) ListJobs() ([]*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, result, error, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT 50`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := []*Job{}
+	for rows.Next() {
+		job := &Job{}
+		if err := rows.Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
+func (db *Database) UpdateJobStatus(id, status, progress, result, errMsg string) error {
+	query := `UPDATE jobs SET status=?, progress=?, result=?, error=?, updated_at=? WHERE id=?`
+	_, err := db.Exec(query, status, progress, result, errMsg, time.Now(), id)
+	return err
+}
+
 func boolToInt(b bool) int {
 	if b {
 		return 1

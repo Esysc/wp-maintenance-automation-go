@@ -5,19 +5,14 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
-	"github.com/andreacristalli/wp-maintenance-automation-go/internal/backup"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
-	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
-	"github.com/andreacristalli/wp-maintenance-automation-go/internal/upgrade"
 )
 
 type profileUser struct {
@@ -512,9 +507,7 @@ func (s *APIServer) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		SiteID string `json:"site_id"`
-	}
+	var req jobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiErr(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -525,147 +518,16 @@ func (s *APIServer) handleBackup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	site, err := s.Database.GetSite(req.SiteID)
+	job, err := s.enqueueJob("backup", req)
 	if err != nil {
-		apiErr(w, http.StatusNotFound, "site not found")
+		apiErr(w, http.StatusServiceUnavailable, "failed to enqueue backup job: "+err.Error())
 		return
 	}
 
-	timestamp := time.Now().Format("20060102_150405")
-	backupDir := site.BackupDir
-	if backupDir == "" {
-		backupDir = "./backups"
-	}
-	workDir := filepath.Join(backupDir, timestamp)
-	dbDir := filepath.Join(workDir, "db")
-	wpDir := filepath.Join(workDir, "wp")
-	if err := os.MkdirAll(dbDir, 0700); err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to create work directory")
-		return
-	}
-	if err := os.MkdirAll(wpDir, 0700); err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to create wp directory")
-		return
-	}
-
-	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
-	sshOpts.Key = site.WPSSHKey
-	sshClient := ssh.NewClient(sshOpts)
-	defer sshClient.Close()
-
-	wpRoot := site.WPRoot
-	if wpRoot == "" {
-		detectedRoot, err := sshClient.DetectWPRoot()
-		if err != nil {
-			os.RemoveAll(workDir)
-			apiErr(w, http.StatusInternalServerError, "could not detect WordPress root: "+err.Error())
-			return
-		}
-		wpRoot = detectedRoot
-	}
-
-	wpVersion, _ := sshClient.WPCLI(wpRoot, "core version")
-
-	dbName, dbUser, dbPassword, dbHost, err := sshClient.ParseDBConfig(wpRoot)
-	if err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "failed to parse DB config from wp-config.php: "+err.Error())
-		return
-	}
-	if dbHost == "" {
-		dbHost = "localhost"
-	}
-
-	dumpOutput, err := sshClient.RunCommand(fmt.Sprintf(
-		"mysqldump --single-transaction --quick --lock-tables=false -u%s -p'%s' -h%s %s",
-		dbUser, dbPassword, dbHost, dbName,
-	))
-	if err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "database dump failed: "+err.Error())
-		return
-	}
-	dumpFile := filepath.Join(dbDir, timestamp+"_"+dbName+".sql")
-	if err := os.WriteFile(dumpFile, []byte(dumpOutput), 0600); err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "failed to write db dump")
-		return
-	}
-
-	rsyncExcludes := []string{"wp-content/cache/"}
-	remoteWPRoot := site.WPSSHUser + "@" + site.WPSSHHost + ":" + wpRoot + "/"
-	if err := sshClient.SyncDir(remoteWPRoot, wpDir+"/", rsyncExcludes, false); err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "file sync failed: "+err.Error())
-		return
-	}
-
-	fileCount := 0
-	filepath.Walk(wpDir, func(path string, info os.FileInfo, err error) error {
-		if err == nil && !info.IsDir() {
-			fileCount++
-		}
-		return nil
-	})
-
-	resticRepo := site.ResticRepository
-	resticPassFile := site.ResticPasswordFile
-	if resticRepo == "" && s.Restic != nil {
-		resticRepo = s.Restic.Repository
-	}
-	if resticPassFile == "" && s.Restic != nil {
-		resticPassFile = s.Restic.PasswordFile
-	}
-
-	if resticRepo == "" {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusBadRequest, "no restic repository configured — set per-site or globally via RESTIC_REPOSITORY")
-		return
-	}
-
-	resticClient, err := restic.NewClient(resticRepo, resticPassFile)
-	if err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "restic configuration error")
-		return
-	}
-
-	resticTags := []string{site.ID, site.Name, "backup:" + timestamp}
-	if _, err := resticClient.Backup(workDir, resticTags); err != nil {
-		os.RemoveAll(workDir)
-		apiErr(w, http.StatusInternalServerError, "restic backup failed: "+err.Error())
-		return
-	}
-
-	if site.RetentionFlags != "" {
-		flags := backup.ParseRetentionFlags(site.RetentionFlags)
-		if len(flags) > 0 {
-			resticClient.Forget(flags...)
-		}
-	}
-
-	backupRecord := &db.Backup{
-		ID:        auth.GenerateID(),
-		SiteID:    req.SiteID,
-		Timestamp: timestamp,
-		Host:      site.WPSSHHost,
-		WPRoot:    wpRoot,
-		WPVersion: wpVersion,
-		DBName:    dbName,
-		DBHost:    dbHost,
-		DumpFile:  dumpFile,
-		FileCount: fileCount,
-	}
-	if err := s.Database.CreateBackup(backupRecord); err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to record backup")
-		return
-	}
-
-	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"message":   "backup completed",
-		"status":    "completed",
-		"backup_id": backupRecord.ID,
-		"timestamp": timestamp,
+	jsonResp(w, http.StatusAccepted, map[string]interface{}{
+		"message": "backup queued",
+		"job_id":  job.ID,
+		"status":  "queued",
 	})
 }
 
@@ -700,14 +562,7 @@ func (s *APIServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		SiteID     string `json:"site_id"`
-		SnapshotID string `json:"snapshot_id"`
-		ApplyDB    bool   `json:"apply_db"`
-		ApplyFiles bool   `json:"apply_files"`
-		Confirm    bool   `json:"confirm"`
-	}
-
+	var req jobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiErr(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -735,145 +590,19 @@ func (s *APIServer) handleRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	site, err := s.Database.GetSite(req.SiteID)
+	job, err := s.enqueueJob("restore", req)
 	if err != nil {
-		apiErr(w, http.StatusNotFound, "site not found")
+		apiErr(w, http.StatusServiceUnavailable, "failed to enqueue restore job: "+err.Error())
 		return
 	}
 
-	resticRepo := site.ResticRepository
-	resticPassFile := site.ResticPasswordFile
-	if resticRepo == "" && s.Restic != nil {
-		resticRepo = s.Restic.Repository
-	}
-	if resticPassFile == "" && s.Restic != nil {
-		resticPassFile = s.Restic.PasswordFile
-	}
-	if resticRepo == "" {
-		apiErr(w, http.StatusBadRequest, "no restic repository configured for this site")
-		return
-	}
-
-	resticClient, err := restic.NewClient(resticRepo, resticPassFile)
-	if err != nil {
-		apiErr(w, http.StatusInternalServerError, "restic configuration error")
-		return
-	}
-
-	restoreDir, err := os.MkdirTemp("", "wpmaintenance-restore-*")
-	if err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to create restore directory")
-		return
-	}
-	defer os.RemoveAll(restoreDir)
-
-	if err := resticClient.Restore(req.SnapshotID, restoreDir); err != nil {
-		apiErr(w, http.StatusInternalServerError, "restic restore failed: "+err.Error())
-		return
-	}
-
-	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
-	sshOpts.Key = site.WPSSHKey
-	sshClient := ssh.NewClient(sshOpts)
-	defer sshClient.Close()
-
-	wpRoot := site.WPRoot
-	if wpRoot == "" {
-		detectedRoot, err := sshClient.DetectWPRoot()
-		if err != nil {
-			apiErr(w, http.StatusInternalServerError, "could not detect WordPress root: "+err.Error())
-			return
-		}
-		wpRoot = detectedRoot
-	}
-
-	if req.ApplyDB {
-		var dbDump string
-		filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-			if info != nil && !info.IsDir() && strings.HasSuffix(path, ".sql") {
-				dbDump = path
-				return fmt.Errorf("found")
-			}
-			return nil
-		})
-
-		if dbDump == "" {
-			filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-				if info != nil && !info.IsDir() && strings.HasSuffix(path, ".sql.gz") {
-					dbDump = path
-					return fmt.Errorf("found")
-				}
-				return nil
-			})
-		}
-
-		if dbDump == "" {
-			apiErr(w, http.StatusInternalServerError, "no database dump found in snapshot")
-			return
-		}
-
-		dbName, dbUser, dbPassword, dbHost, err := sshClient.ParseDBConfig(wpRoot)
-		if err != nil {
-			apiErr(w, http.StatusInternalServerError, "failed to parse DB config from wp-config.php: "+err.Error())
-			return
-		}
-		if dbHost == "" {
-			dbHost = "localhost"
-		}
-
-		remoteDump := "/tmp/wp-restore-" + req.SnapshotID + ".sql"
-		if strings.HasSuffix(dbDump, ".gz") {
-			remoteDump += ".gz"
-		}
-
-		if err := sshClient.UploadFile(dbDump, remoteDump); err != nil {
-			apiErr(w, http.StatusInternalServerError, "failed to upload db dump: "+err.Error())
-			return
-		}
-
-		var importCmd string
-		if strings.HasSuffix(dbDump, ".gz") {
-			importCmd = fmt.Sprintf("gunzip -c %s | mysql -u%s -p'%s' -h%s %s && rm -f %s",
-				remoteDump, dbUser, dbPassword, dbHost, dbName, remoteDump)
-		} else {
-			importCmd = fmt.Sprintf("mysql -u%s -p'%s' -h%s %s < %s && rm -f %s",
-				dbUser, dbPassword, dbHost, dbName, remoteDump, remoteDump)
-		}
-
-		if _, err := sshClient.RunCommand(importCmd); err != nil {
-			apiErr(w, http.StatusInternalServerError, "database restore failed: "+err.Error())
-			return
-		}
-	}
-
-	if req.ApplyFiles {
-		var wpDir string
-		filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-			if info != nil && info.IsDir() && (info.Name() == "wp" || info.Name() == "wordpress" || info.Name() == "html") {
-				wpDir = path
-				return fmt.Errorf("found")
-			}
-			return nil
-		})
-
-		if wpDir == "" {
-			wpDir = restoreDir
-		}
-
-		rsyncExcludes := []string{"wp-content/cache/"}
-		remoteDest := site.WPSSHUser + "@" + site.WPSSHHost + ":" + wpRoot + "/"
-		if err := sshClient.SyncDir(wpDir+"/", remoteDest, rsyncExcludes, true); err != nil {
-			apiErr(w, http.StatusInternalServerError, "file restore failed: "+err.Error())
-			return
-		}
-	}
-
-	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"message":     "restore completed",
+	jsonResp(w, http.StatusAccepted, map[string]interface{}{
+		"message":     "restore queued",
+		"job_id":      job.ID,
+		"status":      "queued",
 		"snapshot_id": req.SnapshotID,
 		"apply_db":    req.ApplyDB,
 		"apply_files": req.ApplyFiles,
-		"status":      "completed",
 	})
 }
 
@@ -931,13 +660,7 @@ func (s *APIServer) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		SiteID         string `json:"site_id"`
-		SnapshotID     string `json:"snapshot_id"`
-		AutoRollback   bool   `json:"auto_rollback"`
-		HealthcheckURL string `json:"healthcheck_url"`
-	}
-
+	var req jobRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiErr(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -948,58 +671,16 @@ func (s *APIServer) handleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	site, err := s.Database.GetSite(req.SiteID)
+	job, err := s.enqueueJob("upgrade", req)
 	if err != nil {
-		apiErr(w, http.StatusNotFound, "site not found")
+		apiErr(w, http.StatusServiceUnavailable, "failed to enqueue upgrade job: "+err.Error())
 		return
 	}
 
-	healthcheckURL := req.HealthcheckURL
-	if healthcheckURL == "" {
-		healthcheckURL = site.HealthcheckURL
-	}
-
-	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
-	sshOpts.Key = site.WPSSHKey
-	sshClient := ssh.NewClient(sshOpts)
-	defer sshClient.Close()
-
-	wpRoot := site.WPRoot
-	if wpRoot == "" {
-		detectedRoot, err := sshClient.DetectWPRoot()
-		if err != nil {
-			apiErr(w, http.StatusInternalServerError, "could not detect WordPress root: "+err.Error())
-			return
-		}
-		wpRoot = detectedRoot
-	}
-
-	um := upgrade.NewUpgradeManager(&upgrade.UpgradeOptions{
-		SSHClient:        sshClient,
-		WPRoot:           wpRoot,
-		HealthcheckURL:   healthcheckURL,
-		AutoRollback:     req.AutoRollback,
-		StagingRehearsal: site.StagingEnabled,
-		StagingManager:   s.StagingManager,
-		SnapshotID:       req.SnapshotID,
-		ReportDir:        site.BackupDir,
-	})
-
-	report, err := um.Run()
-	if err != nil {
-		apiErr(w, http.StatusInternalServerError, "upgrade failed: "+err.Error())
-		return
-	}
-
-	status := "completed"
-	if report.FinalStatus == "failed" {
-		status = "failed"
-	}
-
-	jsonResp(w, http.StatusOK, map[string]interface{}{
-		"message": "upgrade " + status,
-		"status":  status,
-		"report":  report,
+	jsonResp(w, http.StatusAccepted, map[string]interface{}{
+		"message": "upgrade queued",
+		"job_id":  job.ID,
+		"status":  "queued",
 	})
 }
 

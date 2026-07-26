@@ -91,7 +91,6 @@
   "form_password": "Password",
   "form_profile_display_name": "Display Name",
   "form_profile_icon": "Profile Icon",
-  "form_restic_pass_file": "Restic Password File",
   "form_restic_repo": "Restic Repository",
   "form_local_restic": "Usar armazenamento local (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "Retention Flags",

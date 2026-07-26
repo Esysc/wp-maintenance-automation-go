@@ -91,7 +91,6 @@
   "form_password": "Пароль",
   "form_profile_display_name": "Отображаемое имя",
   "form_profile_icon": "Иконка профиля",
-  "form_restic_pass_file": "Файл пароля Restic",
   "form_restic_repo": "Репозиторий Restic",
   "form_local_restic": "Использовать локальное хранилище (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "Флаги хранения",

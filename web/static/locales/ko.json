@@ -91,7 +91,6 @@
   "form_password": "비밀번호",
   "form_profile_display_name": "표시 이름",
   "form_profile_icon": "프로필 아이콘",
-  "form_restic_pass_file": "Restic 비밀번호 파일",
   "form_restic_repo": "Restic 저장소",
   "form_local_restic": "로컬 저장소 사용 (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "보존 플래그",

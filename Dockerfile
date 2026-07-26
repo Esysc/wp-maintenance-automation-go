@@ -50,6 +50,11 @@ COPY staging/ /app/staging/
 # Set permissions
 RUN chmod +x ./api-server ./web-server ./cli
 
+# Entrypoint to auto-create restic password file from env var
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
+
 # Expose ports
 EXPOSE 8080 8081
 

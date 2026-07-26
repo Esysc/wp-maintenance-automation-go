@@ -91,7 +91,6 @@
   "form_password": "パスワード",
   "form_profile_display_name": "表示名",
   "form_profile_icon": "プロフィールアイコン",
-  "form_restic_pass_file": "Resticパスワードファイル",
   "form_restic_repo": "Resticリポジトリ",
   "form_local_restic": "ローカルストレージを使用 (/app/backup_artifacts/restic-repo)",
   "form_retention_flags": "保持フラグ",

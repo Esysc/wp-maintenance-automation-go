@@ -105,6 +105,29 @@
         App.setLoading('backupsBody', false, 'table');
     }
 
+    async function pollJob(jobId, el, onDone) {
+        const poll = async () => {
+            const r = await fetch('/api/v1/jobs/' + jobId, {
+                headers: { 'Authorization': 'Bearer ' + App.getToken() }
+            });
+            const j = await r.json();
+            if (j.success && j.data) {
+                el.textContent = '[' + j.data.status + '] ' + (j.data.progress || '');
+                if (j.data.status === 'completed') {
+                    el.className = 'result-box success';
+                    if (onDone) onDone();
+                    return;
+                } else if (j.data.status === 'failed') {
+                    el.textContent = j.data.error || 'Job failed';
+                    el.className = 'result-box error';
+                    return;
+                }
+                setTimeout(poll, 2000);
+            }
+        };
+        setTimeout(poll, 1000);
+    }
+
     async function runBackup() {
         const siteId = document.getElementById('siteSelector').value;
         if (!siteId) {
@@ -121,11 +144,18 @@
             body: JSON.stringify({ site_id: siteId })
         });
         const result = await resp.json();
-        document.getElementById('backupResult').style.display = 'block';
-        document.getElementById('backupResult').textContent = result.message || App.t('backup_initiated');
-        document.getElementById('backupResult').className = 'result-box success';
-        App.toast(App.t('backup_job_started'), 'success');
-        setTimeout(() => loadBackups(), 2000);
+        const el = document.getElementById('backupResult');
+        el.style.display = 'block';
+
+        if (result.success && result.data && result.data.job_id) {
+            el.textContent = App.t('backup_queued') || 'Backup queued, waiting for completion...';
+            el.className = 'result-box info';
+            App.toast(App.t('backup_job_started'), 'info');
+            pollJob(result.data.job_id, el, () => { loadBackups(); setTimeout(() => loadBackups(), 2000); });
+        } else {
+            el.textContent = result.error || App.t('backup_failed');
+            el.className = 'result-box error';
+        }
     }
 
     async function deleteBackup(id) {

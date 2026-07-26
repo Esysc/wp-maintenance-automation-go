@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
@@ -31,6 +32,8 @@ type APIServer struct {
 	Restic         *restic.ResticClient
 	SSHClient      *ssh.Client
 	StagingManager *staging.Manager
+	jobQueue       chan *jobTuple
+	workerOnce     sync.Once
 }
 
 func Run() {
@@ -82,7 +85,10 @@ func Run() {
 		Checker:        checker,
 		Restic:         resticClient,
 		StagingManager: staging.NewManager("."),
+		jobQueue:       make(chan *jobTuple, jobQueueSize),
 	}
+
+	s.startWorker()
 
 	mux := http.NewServeMux()
 
@@ -115,6 +121,9 @@ func Run() {
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleHealthcheck))
 
 	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleStagingCleanup))
+
+	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleJobs))
+	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleJobByID))
 
 	handler := corsMiddleware(mux)
 

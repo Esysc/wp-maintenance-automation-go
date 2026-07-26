@@ -9,10 +9,11 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - **Secure Backups**: Encrypted, deduplicated backups using restic integration
 - **Automated Upgrades**: WordPress core, plugins, themes, and database upgrades with health checks
 - **Automatic Rollback**: Automatic rollback on upgrade failure
-- **Staging Rehearsal**: Safe testing environment for upgrades before production
-- **RESTful API**: API endpoints for backup, upgrade, and restore operations
+- **Staging Rehearsal**: Ephemeral Docker-based staging — spins up a local WordPress + MariaDB stack from a backup snapshot, runs the full upgrade, healthchecks it, then destroys the environment on success (keeps it on failure for debugging)
+- **RESTful API**: API endpoints for backup, upgrade, restore, and staging operations
 - **Web Interface**: Modern web UI for monitoring and managing WordPress sites
 - **CLI Client**: Command-line interface for scripting and automation
+- **Multi-language UI**: 9 languages (EN, FR, IT, ES, PT, ZH, JA, KO, RU)
 
 ## Features
 
@@ -32,15 +33,19 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - `GET /api/v1/status` - System status overview
 - `GET/POST /api/v1/backups` - List / create backups
 - `GET/DELETE /api/v1/backups/:id` - Backup details / delete
-- `POST /api/v1/upgrade` - Perform WordPress upgrade
-- `GET /api/v1/snapshots` - List available snapshots
+- `POST /api/v1/backup` - Create a backup for a site
+- `POST /api/v1/restore` - Restore a snapshot to a site
+- `POST /api/v1/upgrade` - Perform WordPress upgrade (with optional staging rehearsal)
+- `GET /api/v1/snapshots` - List available restic snapshots
 - `POST /api/v1/healthcheck` - Run health checks
 - `GET/POST /api/v1/sites` - List / create sites
 - `GET/PUT/DELETE /api/v1/sites/:id` - Site details / update / delete
+- `POST /api/v1/sites/detect-config` - Auto-detect site config via SSH
 - `GET/POST /api/v1/users` - List / create users
 - `GET/DELETE /api/v1/users/:id` - User details / delete
 - `GET/POST /api/v1/tokens` - List / create API tokens
 - `DELETE /api/v1/tokens/:id` - Revoke token
+- `POST /api/v1/staging/cleanup` - Destroy a kept staging environment
 
 ### Web Interface
 - Dashboard for monitoring backup status
@@ -52,10 +57,11 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 
 ### Prerequisites
 - Go 1.25 or higher
-- Docker and Docker Compose (recommended for deployment)
+- Docker and Docker Compose (required for deployment and staging rehearsal)
 - SSH access to WordPress servers
 - restic (for backup storage)
 - MySQL/MariaDB database access
+- Docker socket access (`/var/run/docker.sock`) for ephemeral staging environments
 
 ### Quick Start with Docker Compose
 
@@ -191,6 +197,20 @@ Each WordPress site is configured through the Web UI and stored in the database 
 - **Domain set** (`WP_MAINTENANCE_DOMAIN=example.com`): Caddy automatically provisions Let's Encrypt certificates for your domain.
 - HTTP on port 80 redirects to HTTPS on port 443 automatically.
 
+## Staging Rehearsal
+
+When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an ephemeral Docker-based staging rehearsal before the production upgrade:
+
+1. **Restore** — the latest restic snapshot is extracted to a temp directory
+2. **Detect versions** — WP version, DB version (MariaDB/MySQL), and credentials are read from the backup artifacts
+3. **Spin up containers** — a WordPress + MariaDB/MySQL stack is created via Docker Compose with matching versions, self-signed SSL, and WP-CLI
+4. **Seed the environment** — DB dump is imported, WordPress files are copied, `wp-config.php` is patched, and `siteurl`/`home` are updated to `https://localhost:<mapped_port>`
+5. **Run upgrade** — the full WP-CLI upgrade sequence runs against the staging container
+6. **Healthcheck** — HTTPS healthcheck with retries against the staging URL
+7. **Cleanup** — on success, containers are destroyed; on failure, containers are kept for manual inspection
+
+Docker socket access (`/var/run/docker.sock`) must be mounted into the API container for staging to work. This is configured in `docker-compose.yml` by default.
+
 ## Authentication and Login Modes
 
 - Login supports two modes:
@@ -275,13 +295,20 @@ wp-maintenance-automation-go/
 │   ├── restic/             # Restic client wrapper
 │   ├── restore/            # Restore operations
 │   ├── ssh/                # SSH/rsync operations
+│   ├── staging/            # Ephemeral Docker staging environment
 │   └── upgrade/            # WordPress upgrade orchestrator
+├── staging/                # Docker support files for staging
+│   ├── Dockerfile.wp       # WordPress container image
+│   ├── docker-compose.template.yml
+│   ├── wp-entrypoint.sh
+│   ├── wp-config-gen.sh
+│   └── apache-default-ssl.conf
 ├── pkg/                    # Public/reusable packages
 │   ├── api/               # Generic API handler
 │   ├── models/            # Shared data models
 │   └── utils/             # Utility functions
 ├── web/
-│   ├── static/             # Static assets (CSS)
+│   ├── static/             # Static assets (CSS, JS, locales)
 │   └── templates/          # HTML templates
 ├── tests/                  # Integration tests
 ├── Makefile                # Build and development utilities

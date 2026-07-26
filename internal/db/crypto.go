@@ -91,6 +91,10 @@ func encryptSiteSensitiveFields(site *Site) error {
 	if err != nil {
 		return fmt.Errorf("failed to encrypt db_password: %w", err)
 	}
+	site.WPSSHKey, err = encryptSensitive(site.WPSSHKey)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt wp_ssh_key: %w", err)
+	}
 	site.ResticPasswordFile, err = encryptSensitive(site.ResticPasswordFile)
 	if err != nil {
 		return fmt.Errorf("failed to encrypt restic_password_file: %w", err)
@@ -103,6 +107,10 @@ func decryptSiteSensitiveFields(site *Site) error {
 	site.DBPassword, err = decryptSensitive(site.DBPassword)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt db_password: %w", err)
+	}
+	site.WPSSHKey, err = decryptSensitive(site.WPSSHKey)
+	if err != nil {
+		return fmt.Errorf("failed to decrypt wp_ssh_key: %w", err)
 	}
 	site.ResticPasswordFile, err = decryptSensitive(site.ResticPasswordFile)
 	if err != nil {

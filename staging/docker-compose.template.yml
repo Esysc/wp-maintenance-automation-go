@@ -1,0 +1,40 @@
+name: wp-staging
+
+services:
+  db:
+    image: ${DB_IMAGE:-mariadb}:${DB_TAG:-10.11}
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
+      MYSQL_DATABASE: ${DB_NAME:-wordpress}
+      MYSQL_USER: ${DB_USER:-wpuser}
+      MYSQL_PASSWORD: ${DB_PASS:-wppass}
+    command:
+      - --max-allowed-packet=1G
+      - --net-read-timeout=600
+      - --net-write-timeout=600
+      - --innodb-log-file-size=1G
+      - --innodb-buffer-pool-size=1G
+      - --innodb-flush-log-at-trx-commit=0
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      retries: 15
+
+  wp:
+    build:
+      context: ${BUILD_CONTEXT:-.}
+      dockerfile: staging/Dockerfile.wp
+      args:
+        WP_VERSION: ${WP_VERSION:-6.6.2}
+        WP_PHP_VERSION: ${WP_PHP_VERSION:-8.2}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: ${DB_USER:-wpuser}
+      WORDPRESS_DB_PASSWORD: ${DB_PASS:-wppass}
+      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
+    ports:
+      - "0:80"
+      - "0:443"

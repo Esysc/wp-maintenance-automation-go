@@ -31,6 +31,11 @@
     <main class="main-content">
         <header class="page-header">
             <h1 data-i18n="page_title_restore">Restore Backup</h1>
+            <div class="header-actions">
+                <select id="siteSelector" class="site-selector">
+                    <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
+                </select>
+            </div>
         </header>
         <div class="card">
             <form id="restoreForm">
@@ -61,10 +66,18 @@
     <script>
     document.getElementById('restoreForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        const siteId = document.getElementById('siteSelector').value;
+        if (!siteId) {
+            App.toast(App.t('error_site_id_required'), 'error');
+            return;
+        }
+
         const body = {
+            site_id: siteId,
             snapshot_id: document.getElementById('snapshotId').value,
             apply_db: document.getElementById('applyDb').checked,
-            apply_files: document.getElementById('applyFiles').checked
+            apply_files: document.getElementById('applyFiles').checked,
+            confirm: true
         };
         const resp = await fetch('/api/v1/restore', {
             method: 'POST',
@@ -81,6 +94,8 @@
         el.className = 'result-box ' + (resp.ok ? 'success' : 'error');
         App.toast(resp.ok ? App.t('restore_request_submitted') : App.t('restore_request_failed'), resp.ok ? 'success' : 'error');
     });
+
+    loadSitesForSelector('siteSelector');
     </script>
 </body>
 </html>

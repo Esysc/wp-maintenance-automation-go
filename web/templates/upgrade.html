@@ -31,6 +31,11 @@
     <main class="main-content">
         <header class="page-header">
             <h1 data-i18n="page_title_upgrade">WordPress Upgrade</h1>
+            <div class="header-actions">
+                <select id="siteSelector" class="site-selector">
+                    <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
+                </select>
+            </div>
         </header>
         <div class="card">
             <p data-i18n="upgrade_pipeline_summary">This will run the full upgrade pipeline: backup -> validate -> upgrade -> healthcheck -> rollback on failure.</p>
@@ -60,7 +65,14 @@
     <script>
     document.getElementById('upgradeForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        const siteId = document.getElementById('siteSelector').value;
+        if (!siteId) {
+            App.toast(App.t('error_site_id_required'), 'error');
+            return;
+        }
+
         const body = {
+            site_id: siteId,
             auto_rollback: document.getElementById('autoRollback').checked,
             healthcheck_url: document.getElementById('healthcheckUrl').value
         };
@@ -79,6 +91,8 @@
         el.className = 'result-box ' + (resp.ok ? 'success' : 'error');
         App.toast(resp.ok ? App.t('upgrade_started') : App.t('upgrade_failed_start'), resp.ok ? 'success' : 'error');
     });
+
+    loadSitesForSelector('siteSelector');
     </script>
 </body>
 </html>

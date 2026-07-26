@@ -100,11 +100,13 @@ func Run() {
 	mux.HandleFunc("/api/v1/backups", s.authMiddleware(s.handleAPIBackups))
 	mux.HandleFunc("/api/v1/backups/", s.authMiddleware(s.handleAPIBackups))
 	mux.HandleFunc("/api/v1/upgrade", s.authMiddleware(s.handleAPIUpgrade))
+	mux.HandleFunc("/api/v1/restore", s.authMiddleware(s.handleAPIRestore))
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleAPIHealthcheck))
 	mux.HandleFunc("/api/v1/users", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/users/", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/tokens", s.authMiddleware(s.handleAPITokens))
 	mux.HandleFunc("/api/v1/tokens/", s.authMiddleware(s.handleAPITokens))
+	mux.HandleFunc("/api/v1/sites/detect-config", s.authMiddleware(s.handleAPIDetectConfig))
 	mux.HandleFunc("/api/v1/sites", s.authMiddleware(s.handleAPISites))
 	mux.HandleFunc("/api/v1/sites/", s.authMiddleware(s.handleAPISites))
 	mux.HandleFunc("/api/v1/snapshots", s.authMiddleware(s.handleAPISnapshots))
@@ -438,8 +440,16 @@ func (s *WebServer) handleAPIUpgrade(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/upgrade")
 }
 
+func (s *WebServer) handleAPIRestore(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/restore")
+}
+
 func (s *WebServer) handleAPIHealthcheck(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/healthcheck")
+}
+
+func (s *WebServer) handleAPIDetectConfig(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/sites/detect-config")
 }
 
 func (s *WebServer) handleAPIUsers(w http.ResponseWriter, r *http.Request) {
@@ -560,7 +570,12 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 		return
 	}
 
-	apiReq, _ := http.NewRequest(r.Method, s.apiBaseURL+path, strings.NewReader(string(body)))
+	apiURL := s.apiBaseURL + path
+	if r.URL.RawQuery != "" {
+		apiURL += "?" + r.URL.RawQuery
+	}
+
+	apiReq, _ := http.NewRequest(r.Method, apiURL, strings.NewReader(string(body)))
 	apiReq.Header.Set("Content-Type", "application/json")
 
 	if c, err := r.Cookie("token"); err == nil {
@@ -588,6 +603,10 @@ func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, b
 	}
 
 	apiPath := basePath + id
+	if r.URL.RawQuery != "" {
+		apiPath += "?" + r.URL.RawQuery
+	}
+
 	apiReq, _ := http.NewRequest(r.Method, s.apiBaseURL+apiPath, strings.NewReader(string(body)))
 	apiReq.Header.Set("Content-Type", "application/json")
 

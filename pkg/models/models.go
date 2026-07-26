@@ -84,6 +84,7 @@ type UpgradeCreateRequest struct {
 	SkipStaging     bool   `json:"skip_staging"`
 	HealthcheckURL  string `json:"healthcheck_url"`
 	HealthcheckCode int    `json:"healthcheck_code"`
+	SnapshotID      string `json:"snapshot_id"`
 }
 
 type HealthcheckRequest struct {

@@ -52,13 +52,18 @@
                     <div class="field-floating"><input type="text" id="siteSSHHost" placeholder=" " required><label data-i18n="form_ssh_host">SSH Host</label></div>
                     <div class="field-floating"><input type="number" id="siteSSHPort" placeholder=" " value="22"><label data-i18n="form_ssh_port">SSH Port</label></div>
                     <div class="field-floating"><input type="text" id="siteSSHUser" placeholder=" " required><label data-i18n="form_ssh_user">SSH User</label></div>
+                    <div class="field-floating"><textarea id="siteSSHKey" placeholder=" " style="min-height:60px"></textarea><label data-i18n="form_ssh_key">SSH Private Key (optional)</label></div>
                     <div class="field-floating"><input type="text" id="siteWPRoot" placeholder=" " value="/var/www/html" required><label data-i18n="form_wp_root">WordPress Root</label></div>
                     <button type="button" class="btn btn-sm btn-secondary" onclick="detectSiteConfig()" data-i18n="btn_detect_config" style="margin-bottom: 16px;">Detect Configuration via SSH</button>
                     <div class="field-floating"><input type="text" id="siteDBHost" placeholder=" " readonly><label data-i18n="form_db_host">Database Host</label></div>
                     <div class="field-floating"><input type="text" id="siteDBUser" placeholder=" " readonly><label data-i18n="form_db_user">Database User</label></div>
                     <div class="field-floating"><input type="password" id="siteDBPassword" placeholder=" " autocomplete="new-password" readonly><label data-i18n="form_db_password">Database Password</label></div>
                     <div class="field-floating"><input type="text" id="siteDBName" placeholder=" " readonly><label data-i18n="form_db_name">Database Name</label></div>
-                    <div class="field-floating"><input type="text" id="siteResticRepo" placeholder=" "><label data-i18n="form_restic_repo">Restic Repository</label></div>
+                    <div class="field-floating"><input type="text" id="siteResticRepo" placeholder=" " required><label data-i18n="form_restic_repo">Restic Repository</label></div>
+                    <label style="display:flex;align-items:center;gap:6px;margin:4px 0 12px;font-size:0.9em">
+                        <input type="checkbox" id="siteLocalRestic" onchange="toggleLocalRestic()">
+                        <span data-i18n="form_local_restic">Use local storage (/app/backup_artifacts/restic-repo)</span>
+                    </label>
                     <div class="field-floating"><input type="text" id="siteResticPassFile" placeholder=" "><label data-i18n="form_restic_pass_file">Restic Password File</label></div>
                     <div class="field-floating"><input type="text" id="siteBackupDir" placeholder=" " value="./backups"><label data-i18n="form_backup_dir">Backup Directory</label></div>
                     <div class="field-floating"><input type="text" id="siteRetention" placeholder=" " value="--keep-daily 7 --keep-weekly 4"><label data-i18n="form_retention_flags">Retention Flags</label></div>
@@ -70,10 +75,6 @@
                         </select>
                         <label data-i18n="form_staging_enabled">Staging Enabled</label>
                     </div>
-                    <div class="field-floating"><input type="text" id="siteStagingHost" placeholder=" "><label data-i18n="form_staging_host">Staging Host</label></div>
-                    <div class="field-floating"><input type="number" id="siteStagingPort" placeholder=" " value="22"><label data-i18n="form_staging_port">Staging Port</label></div>
-                    <div class="field-floating"><input type="text" id="siteStagingUser" placeholder=" "><label data-i18n="form_staging_user">Staging User</label></div>
-                    <div class="field-floating"><input type="text" id="siteStagingRoot" placeholder=" " value="/var/www/html"><label data-i18n="form_staging_root">Staging Root</label></div>
                     <div class="modal-actions">
                         <button type="button" class="btn" onclick="hideCreateSite()" data-i18n="btn_cancel">Cancel</button>
                         <button type="submit" class="btn btn-primary" id="siteSubmitBtn" data-i18n="btn_create_site">Create Site</button>
@@ -150,21 +151,19 @@
         document.getElementById('siteSSHHost').value = site.wp_ssh_host || '';
         document.getElementById('siteSSHPort').value = site.wp_ssh_port || 22;
         document.getElementById('siteSSHUser').value = site.wp_ssh_user || '';
+        document.getElementById('siteSSHKey').value = site.wp_ssh_key || '';
         document.getElementById('siteWPRoot').value = site.wp_root || '/var/www/html';
         document.getElementById('siteDBHost').value = site.db_host || '';
         document.getElementById('siteDBUser').value = site.db_user || '';
         document.getElementById('siteDBPassword').value = site.db_password || '';
         document.getElementById('siteDBName').value = site.db_name || '';
         document.getElementById('siteResticRepo').value = site.restic_repository || '';
+        document.getElementById('siteLocalRestic').checked = (site.restic_repository || '') === 'local:/app/backup_artifacts/restic-repo';
         document.getElementById('siteResticPassFile').value = site.restic_password_file || '';
         document.getElementById('siteBackupDir').value = site.backup_dir || './backups';
         document.getElementById('siteRetention').value = site.retention_flags || '--keep-daily 7 --keep-weekly 4';
         document.getElementById('siteHealthcheckURL').value = site.healthcheck_url || '';
         document.getElementById('siteStagingEnabled').value = site.staging_enabled ? '1' : '0';
-        document.getElementById('siteStagingHost').value = site.staging_host || '';
-        document.getElementById('siteStagingPort').value = site.staging_port || 22;
-        document.getElementById('siteStagingUser').value = site.staging_user || '';
-        document.getElementById('siteStagingRoot').value = site.staging_root || '/var/www/html';
         App.openModal('createSiteModal');
     }
 
@@ -172,16 +171,25 @@
         editingSiteId = '';
         document.getElementById('siteModalTitle').textContent = App.t('modal_create_site');
         document.getElementById('siteSubmitBtn').textContent = App.t('btn_create_site');
-        App.openModal('createSiteModal');
         document.getElementById('siteCreateForm').reset();
+        document.getElementById('siteLocalRestic').checked = false;
+        App.openModal('createSiteModal');
     }
     function hideCreateSite() { App.closeModal(); }
+
+    function toggleLocalRestic() {
+        const cb = document.getElementById('siteLocalRestic');
+        if (cb && cb.checked) {
+            document.getElementById('siteResticRepo').value = 'local:/app/backup_artifacts/restic-repo';
+        }
+    }
 
     async function detectSiteConfig() {
         const sshHost = document.getElementById('siteSSHHost').value;
         const sshPort = parseInt(document.getElementById('siteSSHPort').value) || 22;
         const sshUser = document.getElementById('siteSSHUser').value;
-        const wpRoot = document.getElementById('siteWPRoot').value || '/var/www/html';
+        const sshKey = document.getElementById('siteSSHKey').value;
+        const wpRoot = document.getElementById('siteWPRoot').value;
 
         if (!sshHost || !sshUser) {
             App.toast(App.t('error_ssh_host_user_required'), 'error');
@@ -196,11 +204,13 @@
                     ssh_host: sshHost,
                     ssh_port: sshPort,
                     ssh_user: sshUser,
+                    ssh_key: sshKey,
                     wp_root: wpRoot
                 })
             });
             const result = await resp.json();
             if (result.success && result.data) {
+                if (result.data.wp_root) document.getElementById('siteWPRoot').value = result.data.wp_root;
                 document.getElementById('siteDBHost').value = result.data.db_host || '';
                 document.getElementById('siteDBUser').value = result.data.db_user || '';
                 document.getElementById('siteDBPassword').value = result.data.db_password || '';
@@ -223,6 +233,7 @@
             wp_ssh_host: document.getElementById('siteSSHHost').value,
             wp_ssh_port: parseInt(document.getElementById('siteSSHPort').value) || 22,
             wp_ssh_user: document.getElementById('siteSSHUser').value,
+            wp_ssh_key: document.getElementById('siteSSHKey').value || null,
             wp_root: document.getElementById('siteWPRoot').value,
             db_host: document.getElementById('siteDBHost').value || null,
             db_user: document.getElementById('siteDBUser').value || null,
@@ -233,11 +244,7 @@
             backup_dir: document.getElementById('siteBackupDir').value || './backups',
             retention_flags: document.getElementById('siteRetention').value || '--keep-daily 7',
             healthcheck_url: document.getElementById('siteHealthcheckURL').value || null,
-            staging_enabled: stagingEnabled,
-            staging_host: document.getElementById('siteStagingHost').value || null,
-            staging_port: parseInt(document.getElementById('siteStagingPort').value) || 22,
-            staging_user: document.getElementById('siteStagingUser').value || null,
-            staging_root: document.getElementById('siteStagingRoot').value || '/var/www/html'
+            staging_enabled: stagingEnabled
         };
 
         const isEdit = editingSiteId !== '';

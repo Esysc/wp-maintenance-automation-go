@@ -149,12 +149,31 @@ Key environment variables (see `.env.example`):
 | `DEBUG` | `false` | Enable debug mode |
 | `SECRET_KEY` | `default-secret-key` | JWT signing / encryption key |
 | `DATA_ENCRYPTION_KEY` | falls back to `SECRET_KEY` | AES-GCM encryption key |
-| `RESTIC_REPOSITORY` | - | Global restic repository (optional) |
+| `RESTIC_REPOSITORY` | - | Global restic repository (optional). Format: `s3:https://…`, `b2:…`, `gs:…`, `azure:…`, `sftp:…`, `rest:…`, `/local/path` or `local:/path`. See [restic docs](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html). |
 | `RESTIC_PASSWORD_FILE` | - | Global restic password file (optional) |
 | `TLS_DISABLE` | `false` | Disable API TLS |
 | `WEB_TLS_DISABLE` | `false` | Disable Web TLS |
 | `WP_MAINTENANCE_TOKEN` | - | Pre-shared token for web->API auth |
 | `WP_MAINTENANCE_DOMAIN` | `localhost` | Domain for Caddy / Let's Encrypt |
+
+### Restic Repository Formats
+
+The `RESTIC_REPOSITORY` value (global or per-site) uses a URI scheme to select the backend:
+
+| Backend | Example |
+|---|---|
+| Local | `local:/data/backups` or `/data/backups` |
+| S3 / S3-compatible | `s3:https://s3.amazonaws.com/my-bucket` |
+| S3 (MinIO) | `s3:https://minio.example.com/my-bucket` |
+| SFTP | `sftp:user@server:/backups` |
+| BackBlaze B2 | `b2:my-bucket:/backups` |
+| Azure Blob | `azure:container:/path` |
+| Google Cloud Storage | `gs:bucket:/path` |
+| OpenStack Swift | `swift:container:/path` |
+| REST server | `rest:https://server:8000/` |
+| rclone | `rclone:crypt:remote:path` |
+
+See the [restic documentation](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html) for details.
 
 ### Per-Site Configuration (Database)
 

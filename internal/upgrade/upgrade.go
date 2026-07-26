@@ -5,7 +5,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 )
 
 type UpgradePhase string
@@ -47,10 +49,9 @@ type UpgradeManager struct {
 	healthcheckURL   string
 	autoRollback     bool
 	stagingRehearsal bool
-	stagingHost      string
-	stagingUser      string
-	stagingPort      int
-	stagingRoot      string
+	stagingManager   *staging.Manager
+	stagingEnv       *staging.StagingEnv
+	snapshotID       string
 	wpCLIBin         string
 	wpCLIExtraArgs   string
 	reportDir        string
@@ -62,10 +63,9 @@ type UpgradeOptions struct {
 	HealthcheckURL   string
 	AutoRollback     bool
 	StagingRehearsal bool
-	StagingHost      string
-	StagingUser      string
-	StagingPort      int
-	StagingRoot      string
+	StagingManager   *staging.Manager
+	SnapshotID       string
+	ResticClient     *restic.ResticClient
 	WPCLIBin         string
 	WPCLIExtraArgs   string
 	ReportDir        string
@@ -88,10 +88,8 @@ func NewUpgradeManager(opts *UpgradeOptions) *UpgradeManager {
 		healthcheckURL:   opts.HealthcheckURL,
 		autoRollback:     opts.AutoRollback,
 		stagingRehearsal: opts.StagingRehearsal,
-		stagingHost:      opts.StagingHost,
-		stagingUser:      opts.StagingUser,
-		stagingPort:      opts.StagingPort,
-		stagingRoot:      opts.StagingRoot,
+		stagingManager:   opts.StagingManager,
+		snapshotID:       opts.SnapshotID,
 		wpCLIBin:         wpCLIBin,
 		wpCLIExtraArgs:   opts.WPCLIExtraArgs,
 		reportDir:        reportDir,
@@ -110,7 +108,6 @@ func (um *UpgradeManager) Run() (*UpgradeReport, error) {
 
 	defer um.writeReport(report, timestamp)
 
-	// Phase 1: Validate environment
 	if err := um.validateEnv(); err != nil {
 		report.Steps = append(report.Steps, UpgradeResult{
 			Phase: PhaseInit, Success: false, Message: err.Error(), Timestamp: time.Now(),
@@ -119,28 +116,33 @@ func (um *UpgradeManager) Run() (*UpgradeReport, error) {
 		return report, err
 	}
 
-	// Phase 2: Core upgrade
+	if um.stagingRehearsal && um.stagingManager != nil {
+		if err := um.runStagingRehearsal(report); err != nil {
+			report.Steps = append(report.Steps, UpgradeResult{
+				Phase: PhaseRehearse, Success: false, Message: err.Error(), Timestamp: time.Now(),
+			})
+			report.FinalReason = fmt.Sprintf("staging rehearsal failed: %v", err)
+			return report, err
+		}
+	}
+
 	if err := um.upgradeCore(report); err != nil {
 		report.FinalReason = fmt.Sprintf("core upgrade phase failed: %v", err)
 		return report, err
 	}
 
-	// Phase 3: Plugin upgrade
 	if err := um.upgradePlugins(report); err != nil {
 		return report, nil
 	}
 
-	// Phase 4: Theme upgrade
 	if err := um.upgradeThemes(report); err != nil {
 		return report, nil
 	}
 
-	// Phase 5: Language upgrades
 	if err := um.upgradeLanguages(report); err != nil {
 		return report, nil
 	}
 
-	// Phase 6: Database update
 	if err := um.upgradeDatabase(report); err != nil {
 		return report, nil
 	}
@@ -148,6 +150,82 @@ func (um *UpgradeManager) Run() (*UpgradeReport, error) {
 	report.FinalStatus = "success"
 	report.FinalReason = "upgrade completed successfully"
 	return report, nil
+}
+
+func (um *UpgradeManager) runStagingRehearsal(report *UpgradeReport) error {
+	report.Steps = append(report.Steps, UpgradeResult{
+		Phase: PhaseRehearse, Success: true, Message: "creating ephemeral staging environment", Timestamp: time.Now(),
+	})
+
+	env, err := um.stagingManager.Create(um.snapshotID, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create staging environment: %w", err)
+	}
+	um.stagingEnv = env
+
+	report.Steps = append(report.Steps, UpgradeResult{
+		Phase:     PhaseRehearse,
+		Success:   true,
+		Message:   fmt.Sprintf("staging environment ready at %s (WP %s, DB %s:%s)", env.HealthURL, env.WPVersion, env.DBImage, env.DBTag),
+		Timestamp: time.Now(),
+	})
+
+	if err := um.runStagingUpgrade(env, report); err != nil {
+		return fmt.Errorf("staging upgrade failed: %w", err)
+	}
+
+	opts := staging.DefaultHealthcheckOptions(env.HealthURL)
+	result, err := staging.CheckStagingHealth(opts)
+	if err != nil {
+		return fmt.Errorf("staging healthcheck failed: %w", err)
+	}
+
+	report.Steps = append(report.Steps, UpgradeResult{
+		Phase:     PhaseHealthcheck,
+		Success:   result.Passed,
+		Message:   result.Message,
+		Timestamp: time.Now(),
+	})
+
+	report.Steps = append(report.Steps, UpgradeResult{
+		Phase: PhaseRehearse, Success: true, Message: "staging rehearsal passed, destroying staging environment", Timestamp: time.Now(),
+	})
+
+	um.stagingManager.Destroy(env)
+	um.stagingEnv = nil
+
+	return nil
+}
+
+func (um *UpgradeManager) runStagingUpgrade(env *staging.StagingEnv, report *UpgradeReport) error {
+	upgradeSteps := []struct {
+		name      string
+		wpArgs    string
+		allowFail bool
+	}{
+		{"core update", "core update", false},
+		{"plugin update --all", "plugin update --all", true},
+		{"theme update --all", "theme update --all", true},
+		{"language core update", "language core update", true},
+		{"language plugin update --all", "language plugin update --all", true},
+		{"language theme update --all", "language theme update --all", true},
+		{"core update-db", "core update-db", true},
+	}
+
+	for _, step := range upgradeSteps {
+		output, err := env.WPCLI(step.wpArgs)
+		if err != nil && !step.allowFail {
+			return fmt.Errorf("staging %s failed: %w", step.name, err)
+		}
+		report.Steps = append(report.Steps, UpgradeResult{
+			Phase:     PhaseUpgrade,
+			Success:   true,
+			Message:   fmt.Sprintf("[staging] %s: %s", step.name, output),
+			Timestamp: time.Now(),
+		})
+	}
+
+	return nil
 }
 
 func (um *UpgradeManager) validateEnv() error {
@@ -171,13 +249,11 @@ func (um *UpgradeManager) upgradeCore(report *UpgradeReport) error {
 		wpArgs = um.wpCLIExtraArgs
 	}
 
-	// Get current version
 	currentVersion, _ := um.wpCLI("core version")
 	report.Steps = append(report.Steps, UpgradeResult{
 		Phase: PhaseUpgrade, Success: true, Message: fmt.Sprintf("current version: %s", currentVersion), Timestamp: time.Now(),
 	})
 
-	// Update core
 	output, err := um.wpCLI("core update " + wpArgs)
 	if err != nil {
 		report.Steps = append(report.Steps, UpgradeResult{
@@ -325,4 +401,8 @@ func (um *UpgradeManager) RunRollback(snapshotID string) error {
 
 	_ = output
 	return nil
+}
+
+func (um *UpgradeManager) GetStagingEnv() *staging.StagingEnv {
+	return um.stagingEnv
 }

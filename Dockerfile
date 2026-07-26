@@ -23,7 +23,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o cli ./cmd/cli/
 # Final stage
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates curl bash
+RUN apk --no-cache add ca-certificates curl bash restic docker-cli docker-cli-compose
 
 WORKDIR /app
 
@@ -43,6 +43,9 @@ COPY web/templates /app/web/templates
 # Copy API docs used by /api/docs endpoint
 RUN mkdir -p /app/api/docs
 COPY api/docs /app/api/docs
+
+# Copy staging support files
+COPY staging/ /app/staging/
 
 # Set permissions
 RUN chmod +x ./api-server ./web-server ./cli

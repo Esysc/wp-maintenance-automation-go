@@ -20,10 +20,6 @@ type Config struct {
 	HealthcheckURL     string        `json:"healthcheck_url"`
 	HealthcheckRetry   int           `json:"healthcheck_retry"`
 	StagingEnabled     bool          `json:"staging_enabled"`
-	StagingHost        string        `json:"staging_host"`
-	StagingPort        int           `json:"staging_port"`
-	StagingUser        string        `json:"staging_user"`
-	StagingRoot        string        `json:"staging_root"`
 	AdminUsername      string        `json:"admin_username"`
 	AdminPassword      string        `json:"admin_password"`
 	SecretKey          string        `json:"secret_key"`
@@ -88,10 +84,6 @@ func NewDefaultConfig() *Config {
 		HealthcheckURL:     "",
 		HealthcheckRetry:   DefaultRetry,
 		StagingEnabled:     false,
-		StagingHost:        "staging.example.com",
-		StagingPort:        DefaultPort,
-		StagingUser:        "ubuntu",
-		StagingRoot:        "/var/www/html",
 		AdminUsername:      "admin",
 		AdminPassword:      "changeme",
 		SecretKey:          "change-this-secret-key-in-production",

@@ -38,6 +38,12 @@ func New(dbPath string) (*Database, error) {
 	if err := database.migrateLegacyPlaintextSiteSecrets(); err != nil {
 		return nil, fmt.Errorf("failed to migrate sensitive site fields: %w", err)
 	}
+	if err := database.migrateSiteSSHKey(); err != nil {
+		return nil, fmt.Errorf("failed to migrate site ssh key: %w", err)
+	}
+	if err := database.migrateDropStagingHostFields(); err != nil {
+		return nil, fmt.Errorf("failed to migrate staging fields: %w", err)
+	}
 
 	return database, nil
 }
@@ -74,6 +80,7 @@ func initSchema(db *sql.DB) error {
 		wp_ssh_host TEXT NOT NULL,
 		wp_ssh_port INTEGER NOT NULL DEFAULT 22,
 		wp_ssh_user TEXT NOT NULL,
+		wp_ssh_key TEXT,
 		wp_root TEXT NOT NULL,
 		db_host TEXT,
 		db_user TEXT,
@@ -85,10 +92,6 @@ func initSchema(db *sql.DB) error {
 		retention_flags TEXT,
 		healthcheck_url TEXT,
 		staging_enabled INTEGER DEFAULT 0,
-		staging_host TEXT,
-		staging_port INTEGER DEFAULT 22,
-		staging_user TEXT,
-		staging_root TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	);
@@ -177,5 +180,72 @@ func (db *Database) migrateUserProfileFields() error {
 		return err
 	}
 
+	return nil
+}
+
+func (db *Database) migrateSiteSSHKey() error {
+	rows, err := db.Query("PRAGMA table_info(sites)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasKey := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "wp_ssh_key" {
+			hasKey = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasKey {
+		_, err = db.Exec("ALTER TABLE sites ADD COLUMN wp_ssh_key TEXT")
+	}
+	return err
+}
+
+func (db *Database) migrateDropStagingHostFields() error {
+	rows, err := db.Query("PRAGMA table_info(sites)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		columns[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, col := range []string{"staging_host", "staging_port", "staging_user", "staging_root"} {
+		if columns[col] {
+			if _, err := db.Exec("ALTER TABLE sites DROP COLUMN " + col); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }

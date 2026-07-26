@@ -35,6 +35,7 @@ type Site struct {
 	WPSSHHost          string `json:"wp_ssh_host"`
 	WPSSHPort          int    `json:"wp_ssh_port"`
 	WPSSHUser          string `json:"wp_ssh_user"`
+	WPSSHKey           string `json:"wp_ssh_key"`
 	WPRoot             string `json:"wp_root"`
 	DBHost             string `json:"db_host"`
 	DBUser             string `json:"db_user"`
@@ -46,10 +47,6 @@ type Site struct {
 	RetentionFlags     string `json:"retention_flags"`
 	HealthcheckURL     string `json:"healthcheck_url"`
 	StagingEnabled     bool   `json:"staging_enabled"`
-	StagingHost        string `json:"staging_host"`
-	StagingPort        int    `json:"staging_port"`
-	StagingUser        string `json:"staging_user"`
-	StagingRoot        string `json:"staging_root"`
 }
 
 func (db *Database) CreateSite(site *Site) error {
@@ -59,31 +56,31 @@ func (db *Database) CreateSite(site *Site) error {
 	}
 
 	query := `
-		INSERT INTO sites (id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_root, db_host, db_user, db_password, db_name, restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url, staging_enabled, staging_host, staging_port, staging_user, staging_root)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO sites (id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root, db_host, db_user, db_password, db_name, restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url, staging_enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := db.Exec(query,
-		toStore.ID, toStore.Name, toStore.WPSSHHost, toStore.WPSSHPort, toStore.WPSSHUser, toStore.WPRoot,
+		toStore.ID, toStore.Name, toStore.WPSSHHost, toStore.WPSSHPort, toStore.WPSSHUser, toStore.WPSSHKey, toStore.WPRoot,
 		toStore.DBHost, toStore.DBUser, toStore.DBPassword, toStore.DBName,
 		toStore.ResticRepository, toStore.ResticPasswordFile, toStore.BackupDir, toStore.RetentionFlags, toStore.HealthcheckURL,
-		boolToInt(toStore.StagingEnabled), toStore.StagingHost, toStore.StagingPort, toStore.StagingUser, toStore.StagingRoot,
+		boolToInt(toStore.StagingEnabled),
 	)
 	return err
 }
 
 func (db *Database) GetSite(id string) (*Site, error) {
 	query := `
-		SELECT id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_root, db_host, db_user, db_password, db_name,
+		SELECT id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root, db_host, db_user, db_password, db_name,
 		       restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url,
-		       staging_enabled, staging_host, staging_port, staging_user, staging_root
+		       staging_enabled
 		FROM sites WHERE id = ?
 	`
 	site := &Site{}
 	err := db.QueryRow(query, id).Scan(
-		&site.ID, &site.Name, &site.WPSSHHost, &site.WPSSHPort, &site.WPSSHUser, &site.WPRoot,
+		&site.ID, &site.Name, &site.WPSSHHost, &site.WPSSHPort, &site.WPSSHUser, &site.WPSSHKey, &site.WPRoot,
 		&site.DBHost, &site.DBUser, &site.DBPassword, &site.DBName,
 		&site.ResticRepository, &site.ResticPasswordFile, &site.BackupDir, &site.RetentionFlags, &site.HealthcheckURL,
-		&site.StagingEnabled, &site.StagingHost, &site.StagingPort, &site.StagingUser, &site.StagingRoot,
+		&site.StagingEnabled,
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -99,9 +96,9 @@ func (db *Database) GetSite(id string) (*Site, error) {
 
 func (db *Database) ListSites() ([]*Site, error) {
 	query := `
-		SELECT id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_root, db_host, db_user, db_password, db_name,
+		SELECT id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root, db_host, db_user, db_password, db_name,
 		       restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url,
-		       staging_enabled, staging_host, staging_port, staging_user, staging_root
+		       staging_enabled
 		FROM sites ORDER BY created_at DESC
 	`
 	rows, err := db.Query(query)
@@ -114,10 +111,10 @@ func (db *Database) ListSites() ([]*Site, error) {
 	for rows.Next() {
 		site := &Site{}
 		err := rows.Scan(
-			&site.ID, &site.Name, &site.WPSSHHost, &site.WPSSHPort, &site.WPSSHUser, &site.WPRoot,
+			&site.ID, &site.Name, &site.WPSSHHost, &site.WPSSHPort, &site.WPSSHUser, &site.WPSSHKey, &site.WPRoot,
 			&site.DBHost, &site.DBUser, &site.DBPassword, &site.DBName,
 			&site.ResticRepository, &site.ResticPasswordFile, &site.BackupDir, &site.RetentionFlags, &site.HealthcheckURL,
-			&site.StagingEnabled, &site.StagingHost, &site.StagingPort, &site.StagingUser, &site.StagingRoot,
+			&site.StagingEnabled,
 		)
 		if err != nil {
 			return nil, err
@@ -137,18 +134,18 @@ func (db *Database) UpdateSite(site *Site) error {
 	}
 
 	query := `
-		UPDATE sites SET name=?, wp_ssh_host=?, wp_ssh_port=?, wp_ssh_user=?, wp_root=?,
+		UPDATE sites SET name=?, wp_ssh_host=?, wp_ssh_port=?, wp_ssh_user=?, wp_ssh_key=?, wp_root=?,
 		               db_host=?, db_user=?, db_password=?, db_name=?, restic_repository=?,
 		               restic_password_file=?, backup_dir=?, retention_flags=?, healthcheck_url=?,
-		               staging_enabled=?, staging_host=?, staging_port=?, staging_user=?, staging_root=?,
+		               staging_enabled=?,
 		               updated_at=CURRENT_TIMESTAMP
 		WHERE id=?
 	`
 	_, err := db.Exec(query,
-		toStore.Name, toStore.WPSSHHost, toStore.WPSSHPort, toStore.WPSSHUser, toStore.WPRoot,
+		toStore.Name, toStore.WPSSHHost, toStore.WPSSHPort, toStore.WPSSHUser, toStore.WPSSHKey, toStore.WPRoot,
 		toStore.DBHost, toStore.DBUser, toStore.DBPassword, toStore.DBName,
 		toStore.ResticRepository, toStore.ResticPasswordFile, toStore.BackupDir, toStore.RetentionFlags, toStore.HealthcheckURL,
-		boolToInt(toStore.StagingEnabled), toStore.StagingHost, toStore.StagingPort, toStore.StagingUser, toStore.StagingRoot,
+		boolToInt(toStore.StagingEnabled),
 		toStore.ID,
 	)
 	return err
@@ -200,6 +197,11 @@ func (db *Database) GetBackupsBySite(siteID string) ([]*Backup, error) {
 		backups = append(backups, backup)
 	}
 	return backups, nil
+}
+
+func (db *Database) DeleteBackup(id string) error {
+	_, err := db.Exec("DELETE FROM backups WHERE id = ?", id)
+	return err
 }
 
 type Backup struct {

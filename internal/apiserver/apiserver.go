@@ -21,14 +21,16 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 )
 
 type APIServer struct {
-	Auth      *auth.AuthManager
-	Database  *db.Database
-	Checker   *healthcheck.Checker
-	Restic    *restic.ResticClient
-	SSHClient *ssh.Client
+	Auth           *auth.AuthManager
+	Database       *db.Database
+	Checker        *healthcheck.Checker
+	Restic         *restic.ResticClient
+	SSHClient      *ssh.Client
+	StagingManager *staging.Manager
 }
 
 func Run() {
@@ -75,10 +77,11 @@ func Run() {
 	}
 
 	s := &APIServer{
-		Auth:     authMgr,
-		Database: database,
-		Checker:  checker,
-		Restic:   resticClient,
+		Auth:           authMgr,
+		Database:       database,
+		Checker:        checker,
+		Restic:         resticClient,
+		StagingManager: staging.NewManager("."),
 	}
 
 	mux := http.NewServeMux()
@@ -97,16 +100,21 @@ func Run() {
 	mux.HandleFunc("/api/v1/tokens/", s.authMiddleware(s.handleTokenByID))
 
 	mux.HandleFunc("/api/v1/sites", s.authMiddleware(s.handleSites))
+	mux.HandleFunc("/api/v1/sites/detect-config", s.authMiddleware(s.handleDetectConfig))
 	mux.HandleFunc("/api/v1/sites/", s.authMiddleware(s.handleSiteByID))
 
 	mux.HandleFunc("/api/v1/backups", s.authMiddleware(s.handleBackups))
 	mux.HandleFunc("/api/v1/backups/", s.authMiddleware(s.handleBackupByID))
+	mux.HandleFunc("/api/v1/backup", s.authMiddleware(s.handleBackup))
+	mux.HandleFunc("/api/v1/restore", s.authMiddleware(s.handleRestore))
+	mux.HandleFunc("/api/v1/upgrade", s.authMiddleware(s.handleUpgrade))
 
 	mux.HandleFunc("/api/v1/snapshots", s.authMiddleware(s.handleSnapshots))
 	mux.HandleFunc("/api/v1/snapshots/", s.authMiddleware(s.handleSnapshotByID))
 
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleHealthcheck))
-	mux.HandleFunc("/api/v1/sites/detect-config", s.authMiddleware(s.handleDetectConfig))
+
+	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleStagingCleanup))
 
 	handler := corsMiddleware(mux)
 

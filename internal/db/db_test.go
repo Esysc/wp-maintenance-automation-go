@@ -57,10 +57,6 @@ func TestCreateAndGetSite(t *testing.T) {
 		RetentionFlags:     "--keep-daily 7",
 		HealthcheckURL:     "http://example.com",
 		StagingEnabled:     true,
-		StagingHost:        "staging.example.com",
-		StagingPort:        22,
-		StagingUser:        "ubuntu",
-		StagingRoot:        "/var/www/html",
 	}
 
 	err := db.CreateSite(site)
@@ -260,16 +256,16 @@ func TestSiteSensitiveFieldsPlaintextBackwardCompatibility(t *testing.T) {
 
 	_, err := db.Exec(`
 		INSERT INTO sites (
-			id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_root,
+			id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root,
 			db_host, db_user, db_password, db_name,
 			restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url,
-			staging_enabled, staging_host, staging_port, staging_user, staging_root
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			staging_enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		"site-legacy-1", "Legacy Site", "legacy.example.com", 22, "ubuntu", "/var/www/html",
+		"site-legacy-1", "Legacy Site", "legacy.example.com", 22, "ubuntu", "", "/var/www/html",
 		"localhost", "wpuser", "legacy-plain-pass", "wordpress",
 		"", "/legacy/path", "", "", "",
-		0, "", 22, "", "",
+		0,
 	)
 	if err != nil {
 		t.Fatalf("failed to insert legacy plaintext site: %v", err)
@@ -294,16 +290,16 @@ func TestMigrateLegacyPlaintextSiteSecretsEncryptsAtRest(t *testing.T) {
 
 	_, err := db.Exec(`
 		INSERT INTO sites (
-			id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_root,
+			id, name, wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root,
 			db_host, db_user, db_password, db_name,
 			restic_repository, restic_password_file, backup_dir, retention_flags, healthcheck_url,
-			staging_enabled, staging_host, staging_port, staging_user, staging_root
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			staging_enabled
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		"site-legacy-2", "Legacy Site 2", "legacy2.example.com", 22, "ubuntu", "/var/www/html",
+		"site-legacy-2", "Legacy Site 2", "legacy2.example.com", 22, "ubuntu", "", "/var/www/html",
 		"localhost", "wpuser", "legacy-pass-2", "wordpress",
 		"", "/legacy/path/2", "", "", "",
-		0, "", 22, "", "",
+		0,
 	)
 	if err != nil {
 		t.Fatalf("failed to insert legacy plaintext site: %v", err)

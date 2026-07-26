@@ -31,7 +31,12 @@
     <main class="main-content">
         <header class="page-header">
             <h1 data-i18n="page_title_backups">Backups</h1>
-            <button class="btn btn-primary" onclick="runBackup()" data-i18n="btn_run_backup_now">Run Backup Now</button>
+            <div class="header-actions">
+                <select id="siteSelector" onchange="loadBackups()" class="site-selector">
+                    <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
+                </select>
+                <button class="btn btn-primary" onclick="runBackup()" data-i18n="btn_run_backup_now">Run Backup Now</button>
+            </div>
         </header>
         <div class="card">
             <table id="backupsTable">
@@ -53,8 +58,11 @@
     <script src="/static/js/app.js"></script>
     <script>
     async function loadBackups() {
+        const siteId = document.getElementById('siteSelector').value;
+        if (!siteId) return;
+
         App.setLoading('backupsBody', true, 'table');
-        const resp = await fetch('/api/v1/backups', {
+        const resp = await fetch(`/api/v1/backups?site_id=${siteId}`, {
             headers: { 'Authorization': 'Bearer ' + App.getToken() }
         });
 
@@ -85,20 +93,32 @@
                     <td>${b.wp_version || '-'}</td>
                     <td>${b.db_name || '-'}</td>
                     <td>${b.file_count || 0}</td>
-                    <td><button onclick="deleteBackup('${App.escapeHTML(String(b.timestamp || ''))}')" class="btn btn-danger btn-sm">${App.t('btn_delete')}</button></td>
+                    <td><button onclick="deleteBackup('${App.escapeHTML(String(b.id || ''))}')" class="btn btn-danger btn-sm">${App.t('btn_delete')}</button></td>
                 </tr>`;
             });
             App.reveal();
         } else {
+            const tbody = document.getElementById('backupsBody');
+            tbody.innerHTML = '';
             App.toast((result && result.error) || App.t('error_loading_data'), 'error');
         }
         App.setLoading('backupsBody', false, 'table');
     }
 
     async function runBackup() {
+        const siteId = document.getElementById('siteSelector').value;
+        if (!siteId) {
+            App.toast(App.t('error_site_id_required'), 'error');
+            return;
+        }
+
         const resp = await fetch('/api/v1/backup', {
             method: 'POST',
-            headers: { 'Authorization': 'Bearer ' + App.getToken() }
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + App.getToken()
+            },
+            body: JSON.stringify({ site_id: siteId })
         });
         const result = await resp.json();
         document.getElementById('backupResult').style.display = 'block';
@@ -110,7 +130,8 @@
 
     async function deleteBackup(id) {
         if (!(await App.confirm(App.t('modal_backup_confirmation') + ' ' + id + '?', App.t('modal_delete_backup')))) return;
-        await fetch('/api/v1/backups/' + id, {
+        const siteId = document.getElementById('siteSelector').value;
+        await fetch(`/api/v1/backups/${id}?site_id=${siteId}`, {
             method: 'DELETE',
             headers: { 'Authorization': 'Bearer ' + App.getToken() }
         });
@@ -118,6 +139,7 @@
         loadBackups();
     }
 
+    loadSitesForSelector('siteSelector');
     loadBackups();
     </script>
 </body>

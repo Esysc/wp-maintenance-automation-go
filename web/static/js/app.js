@@ -388,6 +388,21 @@
         return navigator.clipboard.writeText(value);
     }
 
+    async function loadSitesForSelector(selectId) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        const resp = await fetch('/api/v1/sites', {
+            headers: { 'Authorization': 'Bearer ' + App.getToken() }
+        });
+        const result = await resp.json();
+        if (result.success && result.data) {
+            select.innerHTML = '<option value="" disabled selected>' + App.t('label_select_site') + '</option>';
+            result.data.forEach(s => {
+                select.innerHTML += `<option value="${App.escapeHTML(s.id)}">${App.escapeHTML(s.name || '-')}</option>`;
+            });
+        }
+    }
+
     function init() {
         document.documentElement.lang = state.currentLanguage;
         applyTranslations();
@@ -399,7 +414,7 @@
     }
 
     window.App = {
-        init, getToken, escapeHTML, toast, openModal, closeModal, confirm: confirmDialog, updatePasswordStrength, copyText, setLoading, reveal: applyRevealAnimations, getTranslation, t, setLanguage, applyTranslations, populateLanguageSelectors
+        init, getToken, escapeHTML, toast, openModal, closeModal, confirm: confirmDialog, updatePasswordStrength, copyText, setLoading, reveal: applyRevealAnimations, getTranslation, t, setLanguage, applyTranslations, populateLanguageSelectors, loadSitesForSelector
     };
 
     document.addEventListener('DOMContentLoaded', init);

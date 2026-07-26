@@ -139,14 +139,6 @@ components:
           type: string
         staging_enabled:
           type: boolean
-        staging_host:
-          type: string
-        staging_port:
-          type: integer
-        staging_user:
-          type: string
-        staging_root:
-          type: string
 
     Backup:
       type: object

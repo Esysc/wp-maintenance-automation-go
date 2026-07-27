@@ -31,10 +31,12 @@ type jobRequest struct {
 
 func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) {
 	job := &db.Job{
-		ID:     auth.GenerateID(),
-		Type:   jobType,
-		SiteID: req.SiteID,
-		Status: "queued",
+		ID:              auth.GenerateID(),
+		Type:            jobType,
+		SiteID:          req.SiteID,
+		Status:          "queued",
+		Progress:        "job_progress_queued",
+		ProgressPercent: 0,
 	}
 	if err := s.Database.CreateJob(job); err != nil {
 		return nil, err
@@ -68,20 +70,38 @@ func (s *APIServer) workerLoop() {
 func (s *APIServer) processJob(tuple *jobTuple) {
 	job := tuple.job
 
-	setStatus := func(status, progress string) {
+	condenseError := func(errMsg string) string {
+		errMsg = strings.TrimSpace(errMsg)
+		if errMsg == "" {
+			return "unknown error"
+		}
+		if idx := strings.Index(errMsg, "\n"); idx >= 0 {
+			errMsg = errMsg[:idx]
+		}
+		if len(errMsg) > 320 {
+			errMsg = errMsg[:320] + "..."
+		}
+		return errMsg
+	}
+
+	setStatus := func(status, progress string, percent int) {
 		job.Status = status
 		job.Progress = progress
-		s.Database.UpdateJobStatus(job.ID, status, progress, "", "")
+		job.ProgressPercent = percent
+		s.Database.UpdateJobStatus(job.ID, status, progress, percent, "", "")
 	}
 	setError := func(errMsg string) {
 		job.Status = "failed"
+		errMsg = condenseError(errMsg)
 		job.Error = errMsg
-		s.Database.UpdateJobStatus(job.ID, "failed", "", "", errMsg)
+		s.Database.UpdateJobStatus(job.ID, "failed", job.Progress, job.ProgressPercent, "", errMsg)
 	}
 	setResult := func(result string) {
 		job.Status = "completed"
+		job.Progress = "job_progress_completed"
+		job.ProgressPercent = 100
 		job.Result = result
-		s.Database.UpdateJobStatus(job.ID, "completed", "", result, "")
+		s.Database.UpdateJobStatus(job.ID, "completed", job.Progress, job.ProgressPercent, result, "")
 	}
 	cleanupRemoveAll := func(path string) {
 		if err := os.RemoveAll(path); err != nil {
@@ -89,7 +109,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 	}
 
-	setStatus("running", "loading site configuration")
+	setStatus("running", "job_progress_loading_site_configuration", 5)
 
 	site, err := s.Database.GetSite(job.SiteID)
 	if err != nil {
@@ -106,7 +126,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 	switch job.Type {
 	case "backup":
-		setStatus("running", "creating backup directories")
+		setStatus("running", "job_progress_backup_creating_directories", 10)
 		timestamp := time.Now().Format("20060102_150405")
 		backupDir := site.BackupDir
 		if backupDir == "" {
@@ -126,7 +146,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		if wpRoot == "" {
-			setStatus("running", "detecting WordPress root")
+			setStatus("running", "job_progress_detecting_wp_root", 15)
 			detectedRoot, err := sshClient.DetectWPRoot()
 			if err != nil {
 				cleanupRemoveAll(workDir)
@@ -136,10 +156,10 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			wpRoot = detectedRoot
 		}
 
-		setStatus("running", "getting WordPress version")
+		setStatus("running", "job_progress_backup_reading_wp_version", 20)
 		wpVersion, _ := sshClient.WPCLI(wpRoot, "core version")
 
-		setStatus("running", "parsing database configuration")
+		setStatus("running", "job_progress_backup_parsing_db_config", 30)
 		dbName, dbUser, dbPassword, dbHost, err := sshClient.ParseDBConfig(wpRoot)
 		if err != nil {
 			cleanupRemoveAll(workDir)
@@ -150,26 +170,40 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			dbHost = "localhost"
 		}
 
-		setStatus("running", "dumping database")
-		dumpOutput, err := sshClient.RunCommand(fmt.Sprintf(
-			"mysqldump --single-transaction --quick --lock-tables=false -u%s -p'%s' -h%s %s",
-			dbUser, dbPassword, dbHost, dbName,
-		))
-		if err != nil {
+		setStatus("running", "job_progress_backup_dumping_database", 45)
+		shellQuote := func(value string) string {
+			return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+		}
+		remoteCredFile := "/tmp/wpma-mysqldump-" + timestamp + ".cnf"
+		defer sshClient.RemoveRemoteFile(remoteCredFile)
+		remoteCredContent := fmt.Sprintf("[client]\nuser=%s\npassword=%s\nhost=%s\n", dbUser, dbPassword, dbHost)
+		if _, err := sshClient.RunCommand(fmt.Sprintf("umask 077 && cat > %s << 'EOF'\n%sEOF", shellQuote(remoteCredFile), remoteCredContent)); err != nil {
+			cleanupRemoveAll(workDir)
+			setError("failed to prepare database credentials: " + err.Error())
+			return
+		}
+		remoteDumpFile := "/tmp/wpma-dump-" + timestamp + ".sql"
+		defer sshClient.RemoveRemoteFile(remoteDumpFile)
+		dumpCmd := fmt.Sprintf(
+			"mysqldump --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s > %s",
+			shellQuote(remoteCredFile), shellQuote(dbName), shellQuote(remoteDumpFile),
+		)
+		if _, err := sshClient.RunCommand(dumpCmd); err != nil {
 			cleanupRemoveAll(workDir)
 			setError("database dump failed: " + err.Error())
 			return
 		}
+
 		dumpFile := filepath.Join(dbDir, timestamp+"_"+dbName+".sql")
-		if err := os.WriteFile(dumpFile, []byte(dumpOutput), 0600); err != nil {
+		if err := sshClient.DownloadFile(remoteDumpFile, dumpFile); err != nil {
 			cleanupRemoveAll(workDir)
-			setError("failed to write db dump: " + err.Error())
+			setError("failed to download db dump: " + err.Error())
 			return
 		}
 
-		setStatus("running", "syncing WordPress files")
+		setStatus("running", "job_progress_backup_syncing_files", 60)
 		rsyncExcludes := []string{"wp-content/cache/"}
-		if err := sshClient.SyncDir(sshOpts.Host+":"+wpRoot+"/", wpDir+"/", rsyncExcludes, false); err != nil {
+		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false); err != nil {
 			cleanupRemoveAll(workDir)
 			setError("file sync failed: " + err.Error())
 			return
@@ -197,7 +231,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
-		setStatus("running", "creating restic backup")
+		setStatus("running", "job_progress_backup_creating_restic", 75)
 		resticClient, err := restic.NewClient(resticRepo, resticPassFile)
 		if err != nil {
 			cleanupRemoveAll(workDir)
@@ -236,12 +270,14 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
+		setStatus("running", "job_progress_backup_recording_metadata", 90)
+
 		log.Printf("backup completed for site %s: backup_id=%s timestamp=%s", site.Name, backupRecord.ID, timestamp)
 		setResult(fmt.Sprintf(`{"backup_id":"%s","timestamp":"%s"}`, backupRecord.ID, timestamp))
 
 	case "restore":
 		if wpRoot == "" {
-			setStatus("running", "detecting WordPress root")
+			setStatus("running", "job_progress_detecting_wp_root", 10)
 			detectedRoot, err := sshClient.DetectWPRoot()
 			if err != nil {
 				setError("could not detect WordPress root: " + err.Error())
@@ -263,7 +299,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
-		setStatus("running", "configuring restic client")
+		setStatus("running", "job_progress_restore_configuring_restic", 20)
 		resticClient, err := restic.NewClient(resticRepo, resticPassFile)
 		if err != nil {
 			setError("restic configuration error")
@@ -277,14 +313,14 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 		defer cleanupRemoveAll(restoreDir)
 
-		setStatus("running", "restoring from snapshot "+tuple.req.SnapshotID)
+		setStatus("running", "job_progress_restore_restoring_snapshot", 35)
 		if err := resticClient.Restore(tuple.req.SnapshotID, restoreDir); err != nil {
 			setError("restic restore failed: " + err.Error())
 			return
 		}
 
 		if tuple.req.ApplyDB {
-			setStatus("running", "restoring database")
+			setStatus("running", "job_progress_restore_restoring_database", 55)
 			var dbDump string
 			filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
 				if info != nil && !info.IsDir() && strings.HasSuffix(path, ".sql") {
@@ -341,7 +377,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		if tuple.req.ApplyFiles {
-			setStatus("running", "restoring WordPress files")
+			setStatus("running", "job_progress_restore_restoring_files", 75)
 			var wpDir string
 			filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
 				if info != nil && info.IsDir() && (info.Name() == "wp" || info.Name() == "wordpress" || info.Name() == "html") {
@@ -355,8 +391,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 
 			rsyncExcludes := []string{"wp-content/cache/"}
-			remoteDest := sshOpts.Host + ":" + wpRoot + "/"
-			if err := sshClient.SyncDir(wpDir+"/", remoteDest, rsyncExcludes, true); err != nil {
+			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true); err != nil {
 				setError("file restore failed: " + err.Error())
 				return
 			}
@@ -367,7 +402,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 	case "upgrade":
 		if wpRoot == "" {
-			setStatus("running", "detecting WordPress root")
+			setStatus("running", "job_progress_detecting_wp_root", 10)
 			detectedRoot, err := sshClient.DetectWPRoot()
 			if err != nil {
 				setError("could not detect WordPress root: " + err.Error())
@@ -381,7 +416,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			healthcheckURL = site.HealthcheckURL
 		}
 
-		setStatus("running", "running WordPress upgrade")
+		setStatus("running", "job_progress_upgrade_running_pipeline", 25)
 		um := upgrade.NewUpgradeManager(&upgrade.UpgradeOptions{
 			SSHClient:        sshClient,
 			WPRoot:           wpRoot,
@@ -418,6 +453,22 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
+
+	siteID := r.URL.Query().Get("site_id")
+	if siteID != "" {
+		job, err := s.Database.GetLatestJobBySite(siteID)
+		if err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to get job")
+			return
+		}
+		if job == nil {
+			jsonResp(w, http.StatusOK, nil)
+			return
+		}
+		jsonResp(w, http.StatusOK, job)
+		return
+	}
+
 	jobs, err := s.Database.ListJobs()
 	if err != nil {
 		apiErr(w, http.StatusInternalServerError, "failed to list jobs")

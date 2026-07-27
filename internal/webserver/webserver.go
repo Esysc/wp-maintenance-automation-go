@@ -111,6 +111,8 @@ func Run() {
 	mux.HandleFunc("/api/v1/sites/", s.authMiddleware(s.handleAPISites))
 	mux.HandleFunc("/api/v1/snapshots", s.authMiddleware(s.handleAPISnapshots))
 	mux.HandleFunc("/api/v1/snapshots/", s.authMiddleware(s.handleAPISnapshots))
+	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
+	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
@@ -553,6 +555,19 @@ func (s *WebServer) handleAPISites(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPISnapshots(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/snapshots")
+}
+
+func (s *WebServer) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Path
+	if path == "/api/v1/jobs" || path == "/api/v1/jobs/" {
+		s.proxyRequest(w, r, "/api/v1/jobs")
+		return
+	}
+
+	if strings.HasPrefix(path, "/api/v1/jobs/") {
+		jobID := strings.TrimPrefix(path, "/api/v1/jobs/")
+		s.proxyRequestWithID(w, r, "/api/v1/jobs/", jobID)
+	}
 }
 
 func (s *WebServer) handleAPIStatus(w http.ResponseWriter, r *http.Request) {

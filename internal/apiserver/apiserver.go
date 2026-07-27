@@ -14,6 +14,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -72,10 +74,39 @@ func Run() {
 	var resticClient *restic.ResticClient
 	resticRepository := os.Getenv("RESTIC_REPOSITORY")
 	resticPasswordFile := os.Getenv("RESTIC_PASSWORD_FILE")
-	if resticRepository != "" && resticPasswordFile != "" {
-		resticClient, err = restic.NewClient(resticRepository, resticPasswordFile)
-		if err != nil {
-			log.Printf("Restic disabled: %v", err)
+	if resticRepository == "" {
+		resticRepository = "/app/backup_artifacts/restic-repo"
+	}
+	if resticPasswordFile == "" {
+		resticPasswordFile = filepath.Join(dataDir, "restic_password")
+	}
+
+	if _, statErr := os.Stat(resticPasswordFile); os.IsNotExist(statErr) {
+		pass := os.Getenv("RESTIC_PASSWORD")
+		if pass == "" {
+			pass = "wp-maintenance-local-password"
+			log.Printf("RESTIC_PASSWORD is not set; using local development default password file")
+		}
+		if mkErr := os.MkdirAll(filepath.Dir(resticPasswordFile), 0700); mkErr == nil {
+			if writeErr := os.WriteFile(resticPasswordFile, []byte(pass), 0600); writeErr != nil {
+				log.Printf("Restic password file setup failed: %v", writeErr)
+			}
+		}
+	}
+
+	resticClient, err = restic.NewClient(resticRepository, resticPasswordFile)
+	if err != nil {
+		log.Printf("Restic disabled: %v", err)
+	} else {
+		// On first run for local path repositories, initialize restic metadata.
+		if !strings.Contains(resticRepository, ":") {
+			if mkErr := os.MkdirAll(resticRepository, 0700); mkErr != nil {
+				log.Printf("Restic repository directory setup failed: %v", mkErr)
+			} else if _, cfgErr := os.Stat(filepath.Join(resticRepository, "config")); os.IsNotExist(cfgErr) {
+				if initErr := resticClient.Init(); initErr != nil {
+					log.Printf("Restic init warning: %v", initErr)
+				}
+			}
 		}
 	}
 

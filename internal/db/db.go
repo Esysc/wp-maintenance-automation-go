@@ -44,6 +44,9 @@ func New(dbPath string) (*Database, error) {
 	if err := database.migrateDropStagingHostFields(); err != nil {
 		return nil, fmt.Errorf("failed to migrate staging fields: %w", err)
 	}
+	if err := database.migrateJobsProgressPercent(); err != nil {
+		return nil, fmt.Errorf("failed to migrate jobs progress percent: %w", err)
+	}
 
 	return database, nil
 }
@@ -128,6 +131,7 @@ func initSchema(db *sql.DB) error {
 		site_id TEXT NOT NULL,
 		status TEXT NOT NULL DEFAULT 'queued',
 		progress TEXT NOT NULL DEFAULT '',
+		progress_percent INTEGER NOT NULL DEFAULT 0,
 		result TEXT NOT NULL DEFAULT '',
 		error TEXT NOT NULL DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -262,5 +266,41 @@ func (db *Database) migrateDropStagingHostFields() error {
 			}
 		}
 	}
+	return nil
+}
+
+func (db *Database) migrateJobsProgressPercent() error {
+	rows, err := db.Query("PRAGMA table_info(jobs)")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasProgressPercent := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "progress_percent" {
+			hasProgressPercent = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	if !hasProgressPercent {
+		if _, err := db.Exec("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0"); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }

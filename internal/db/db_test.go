@@ -377,3 +377,71 @@ func TestNewMigratesLegacyUserProfileFields(t *testing.T) {
 		t.Fatalf("expected icon to default to user, got %q", user.Icon)
 	}
 }
+
+func TestNewMigratesJobsProgressPercentColumn(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "legacy-jobs.sqlite")
+
+	legacyDB, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("failed to open legacy database: %v", err)
+	}
+
+	_, err = legacyDB.Exec(`
+		CREATE TABLE jobs (
+			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL,
+			site_id TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'queued',
+			progress TEXT NOT NULL DEFAULT '',
+			result TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		legacyDB.Close()
+		t.Fatalf("failed to create legacy jobs table: %v", err)
+	}
+
+	if err := legacyDB.Close(); err != nil {
+		t.Fatalf("failed to close legacy database: %v", err)
+	}
+
+	migrated, err := New(dbPath)
+	if err != nil {
+		t.Fatalf("failed to reopen migrated database: %v", err)
+	}
+	defer migrated.Close()
+
+	rows, err := migrated.Query("PRAGMA table_info(jobs)")
+	if err != nil {
+		t.Fatalf("failed to inspect jobs schema: %v", err)
+	}
+	defer rows.Close()
+
+	hasProgressPercent := false
+	for rows.Next() {
+		var cid int
+		var name string
+		var columnType string
+		var notNull int
+		var defaultValue sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			t.Fatalf("failed scanning jobs schema row: %v", err)
+		}
+		if name == "progress_percent" {
+			hasProgressPercent = true
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("failed iterating jobs schema rows: %v", err)
+	}
+
+	if !hasProgressPercent {
+		t.Fatalf("expected jobs table to include progress_percent column after migration")
+	}
+}

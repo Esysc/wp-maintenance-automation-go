@@ -89,6 +89,10 @@ func main() {
 		cmdListBackups(client)
 	case "snapshots":
 		cmdListSnapshots(client)
+	case "jobs":
+		cmdListJobs(client, os.Args[2:])
+	case "job":
+		cmdGetJob(client, os.Args[2:])
 	case "healthcheck":
 		cmdHealthcheck(client, os.Args[2:])
 	case "status":
@@ -119,37 +123,58 @@ Usage:
   wp-maintenance <command> [options]
 
 Commands:
-  backup                  Create a new backup
-  restore <snapshot_id>   Restore from a snapshot
-  upgrade                 Run full WordPress upgrade
-  backups                 List all backups
-  snapshots               List restic snapshots
-  healthcheck <url>       Run healthcheck against a URL
-  status                  Show system status
-  login                   Login to get API token
-  user                    Manage users
-    user list             List users
+  backup -s <site_id>      Create a new backup for a site
+  restore <snapshot_id>    Restore from a snapshot
+  upgrade -s <site_id>     Run full WordPress upgrade
+  backups                  List all backups
+  snapshots                List restic snapshots
+  jobs [--site-id <id>]    List recent jobs
+  job <job_id>             Get job status
+  healthcheck <url>        Run healthcheck against a URL
+  status                   Show system status
+  login                    Login to get API token
+  user                     Manage users
+    user list              List users
     user create <user> <pass> <role>   Create user
-    user delete <id>      Delete user
-  token                   Manage API tokens
-    token list            List tokens
+    user delete <id>       Delete user
+  token                    Manage API tokens
+    token list             List tokens
     token create <user_id> <name> [hours]   Create token
-    token revoke <id>     Revoke token
-  config                  View/update configuration
-	reset-password          Reset internal admin password (local DB recovery)
-  help                    Show this help message
+    token revoke <id>      Revoke token
+  config                   View/update configuration
+  reset-password           Reset internal admin password (local DB recovery)
+  help                     Show this help message
 
 Environment:
   API_URL              API server URL (default: http://localhost:8081)
   WP_MAINTENANCE_TOKEN  API token for authentication
-	DATA_DIR              Data directory (default: ./data)
-	SECRET_KEY            Signing key (default: default-secret-key)
+  DATA_DIR              Data directory (default: ./data)
+  SECRET_KEY            Signing key (default: default-secret-key)
 `)
 }
 
 func cmdBackup(client *CLIClient, args []string) {
+	var siteID string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--site-id", "-s":
+			if i+1 < len(args) {
+				i++
+				siteID = args[i]
+			}
+		}
+	}
+	if siteID == "" {
+		fmt.Println("Error: --site-id (-s) is required")
+		os.Exit(1)
+	}
+
+	body := map[string]interface{}{
+		"site_id": siteID,
+	}
+
 	fmt.Println("Initiating backup...")
-	result, err := client.do("POST", "/backup", nil)
+	result, err := client.do("POST", "/backup", body)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
@@ -159,26 +184,39 @@ func cmdBackup(client *CLIClient, args []string) {
 
 func cmdRestore(client *CLIClient, args []string) {
 	if len(args) < 1 {
-		fmt.Println("Usage: wp-maintenance restore <snapshot_id>")
+		fmt.Println("Usage: wp-maintenance restore -s <site_id> <snapshot_id> [--apply-db] [--apply-files]")
 		os.Exit(1)
 	}
 
-	snapshotID := args[0]
+	var siteID string
+	var snapshotID string
 	applyDB := false
 	applyFiles := false
 
-	for i, arg := range args {
-		if arg == "--apply-db" || arg == "-d" {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--site-id", "-s":
+			if i+1 < len(args) {
+				i++
+				siteID = args[i]
+			}
+		case "--apply-db", "-d":
 			applyDB = true
-		}
-		if arg == "--apply-files" || arg == "-f" {
+		case "--apply-files", "-f":
 			applyFiles = true
+		default:
+			snapshotID = args[i]
 		}
-		_ = i
+	}
+
+	if siteID == "" {
+		fmt.Println("Error: --site-id (-s) is required")
+		os.Exit(1)
 	}
 
 	body := map[string]interface{}{
 		"snapshot_id": snapshotID,
+		"site_id":     siteID,
 		"apply_db":    applyDB,
 		"apply_files": applyFiles,
 	}
@@ -194,14 +232,26 @@ func cmdRestore(client *CLIClient, args []string) {
 
 func cmdUpgrade(client *CLIClient, args []string) {
 	autoRollback := true
-	for _, arg := range args {
-		if arg == "--no-rollback" || arg == "-n" {
+	var siteID string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--no-rollback", "-n":
 			autoRollback = false
+		case "--site-id", "-s":
+			if i+1 < len(args) {
+				i++
+				siteID = args[i]
+			}
 		}
+	}
+	if siteID == "" {
+		fmt.Println("Error: --site-id (-s) is required")
+		os.Exit(1)
 	}
 
 	body := map[string]interface{}{
 		"auto_rollback": autoRollback,
+		"site_id":       siteID,
 	}
 
 	fmt.Println("Initiating WordPress upgrade...")
@@ -256,6 +306,32 @@ func cmdHealthcheck(client *CLIClient, args []string) {
 func cmdStatus(client *CLIClient) {
 	fmt.Println("Getting system status...")
 	result, err := client.do("GET", "/status", nil)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	printJSON(result)
+}
+
+func cmdListJobs(client *CLIClient, args []string) {
+	path := "/jobs"
+	if len(args) > 0 && args[0] == "--site-id" && len(args) > 1 {
+		path += "?site_id=" + args[1]
+	}
+	result, err := client.do("GET", path, nil)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+	printJSON(result)
+}
+
+func cmdGetJob(client *CLIClient, args []string) {
+	if len(args) < 1 {
+		fmt.Println("Usage: wp-maintenance job <job_id>")
+		os.Exit(1)
+	}
+	result, err := client.do("GET", "/jobs/"+args[0], nil)
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)

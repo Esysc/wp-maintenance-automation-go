@@ -32,7 +32,7 @@
         <header class="page-header">
             <h1 data-i18n="page_title_upgrade">WordPress Upgrade</h1>
             <div class="header-actions">
-                <select id="siteSelector" onchange="loadLatestJob()" class="site-selector">
+                <select id="siteSelector" onchange="App.loadLatestJob()" class="site-selector">
                     <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
                 </select>
             </div>
@@ -64,72 +64,6 @@
     </main>
     <script src="/static/js/app.js"></script>
     <script>
-    function toProgressPercent(job) {
-        if (!job) return 0;
-        if (typeof job.progress_percent === 'number') return Math.max(0, Math.min(100, job.progress_percent));
-        if (job.status === 'completed') return 100;
-        return 0;
-    }
-
-    function jobStatusLabel(job) {
-        return App.t('job_status_' + (job && job.status ? job.status : 'queued'));
-    }
-
-    function jobTypeLabel(job) {
-        return App.t('job_type_' + (job && job.type ? job.type : 'upgrade'));
-    }
-
-    function jobProgressLabel(job) {
-        if (!job) return App.t('job_progress_pending');
-        if (job.status === 'failed') return job.error || App.t('job_progress_failed');
-        if (job.status === 'completed') return App.t('job_progress_completed');
-        return App.t(job.progress || 'job_progress_pending');
-    }
-
-    function renderJobStatus(el, job) {
-        if (!el || !job) return;
-        const pct = toProgressPercent(job);
-        el.style.display = 'block';
-        el.className = 'result-box ' + (job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'info');
-        el.innerHTML = `<div class="job-progress-header"><span>${App.escapeHTML(jobTypeLabel(job))} • ${App.escapeHTML(jobStatusLabel(job))}</span><span>${pct}%</span></div>
-            <div class="job-progress-detail">${App.escapeHTML(jobProgressLabel(job))}</div>
-            <div class="job-progress-track"><div class="job-progress-fill" style="width:${pct}%"></div></div>`;
-    }
-
-    async function loadLatestJob() {
-        const siteId = document.getElementById('siteSelector').value;
-        const el = document.getElementById('jobStatus');
-        if (!siteId) { el.style.display = 'none'; return; }
-        const r = await fetch('/api/v1/jobs?site_id=' + siteId, {
-            headers: { 'Authorization': 'Bearer ' + App.getToken() }
-        });
-        const j = await r.json();
-        if (j.success && j.data) {
-            renderJobStatus(el, j.data);
-        } else {
-            el.style.display = 'none';
-        }
-    }
-
-    async function pollJob(jobId, el) {
-        const poll = async () => {
-            const r = await fetch('/api/v1/jobs/' + jobId, {
-                headers: { 'Authorization': 'Bearer ' + App.getToken() }
-            });
-            const j = await r.json();
-            if (j.success && j.data) {
-                renderJobStatus(el, j.data);
-                if (j.data.status === 'completed') {
-                    return;
-                } else if (j.data.status === 'failed') {
-                    return;
-                }
-                setTimeout(poll, 2000);
-            }
-        };
-        setTimeout(poll, 1000);
-    }
-
     document.getElementById('upgradeForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const siteId = document.getElementById('siteSelector').value;
@@ -158,7 +92,7 @@
             el.textContent = App.t('upgrade_queued') || 'Upgrade queued, waiting for completion...';
             el.className = 'result-box info';
             App.toast(App.t('upgrade_started'), 'info');
-            pollJob(result.data.job_id, el);
+            App.pollJob(result.data.job_id, el);
         } else {
             el.textContent = result.error || result.data && result.data.message || App.t('upgrade_failed');
             el.className = 'result-box ' + (resp.ok ? 'success' : 'error');
@@ -167,7 +101,7 @@
     });
 
     App.loadSitesForSelector('siteSelector');
-    loadLatestJob();
+    App.loadLatestJob();
     </script>
 </body>
 </html>

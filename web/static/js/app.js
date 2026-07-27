@@ -26,7 +26,7 @@
         { code: 'ko', label: '한국어' },
         { code: 'ru', label: 'Русский' }
     ];
-    const state = { activeModal: null, currentLanguage: 'en' };
+    const state = { activeModal: null, currentLanguage: 'en', currentSiteId: '' };
 
     function normalizeLanguage(lang) {
         const normalized = (lang || 'en').split('-')[0].toLowerCase();
@@ -403,6 +403,136 @@
         }
     }
 
+    function toProgressPercent(job) {
+        if (!job) return 0;
+        if (typeof job.progress_percent === 'number') return Math.max(0, Math.min(100, job.progress_percent));
+        if (job.status === 'completed') return 100;
+        return 0;
+    }
+
+    function jobStatusLabel(job) {
+        return App.t('job_status_' + (job && job.status ? job.status : 'queued'));
+    }
+
+    function jobTypeLabel(job) {
+        return App.t('job_type_' + (job && job.type ? job.type : 'backup'));
+    }
+
+    function jobProgressLabel(job) {
+        if (!job) return App.t('job_progress_pending');
+        if (job.status === 'failed') return job.error || App.t('job_progress_failed');
+        if (job.status === 'completed') return App.t('job_progress_completed');
+        return App.t(job.progress || 'job_progress_pending');
+    }
+
+    function renderJobStatus(el, job) {
+        if (!el || !job) return;
+        const pct = toProgressPercent(job);
+        const isActive = job.status === 'running' || job.status === 'queued';
+        el.style.display = 'block';
+        el.className = 'result-box ' + (job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'info');
+        el.innerHTML = `<div class="job-progress-header"><span>${escapeHTML(jobTypeLabel(job))} • ${escapeHTML(jobStatusLabel(job))}</span><span>${pct}%</span></div>
+            <div class="job-progress-detail">${escapeHTML(jobProgressLabel(job))}</div>
+            <div class="job-progress-track"><div class="job-progress-fill" style="width:${pct}%"></div></div>
+            <div class="job-actions" style="margin-top:8px">${isActive ? `<button data-action="cancelJob" data-id="${escapeHTML(job.id)}" class="btn btn-danger btn-sm">${App.t('btn_stop')}</button>` : ''}</div>`;
+    }
+
+    async function loadLatestJob() {
+        const siteId = document.getElementById('siteSelector').value;
+        const el = document.getElementById('jobStatus');
+        state.currentSiteId = siteId || '';
+        if (!siteId) { el.style.display = 'none'; return; }
+        const r = await fetch('/api/v1/jobs?site_id=' + siteId, {
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        const j = await r.json();
+        if (j.success && j.data) {
+            renderJobStatus(el, j.data);
+            if (j.data.status !== 'completed' && j.data.status !== 'failed' && j.data.status !== 'cancelled') {
+                pollJob(j.data.id, el);
+            }
+        } else {
+            el.style.display = 'none';
+        }
+    }
+
+    async function pollJob(jobId, el, onDone) {
+        const poll = async () => {
+            const r = await fetch('/api/v1/jobs/' + jobId, {
+                headers: { 'Authorization': 'Bearer ' + getToken() }
+            });
+            const j = await r.json();
+            if (j.success && j.data) {
+                renderJobStatus(el, j.data);
+                if (j.data.status === 'completed') {
+                    if (onDone) onDone();
+                    return;
+                } else if (j.data.status === 'failed' || j.data.status === 'cancelled') {
+                    return;
+                }
+                setTimeout(poll, 2000);
+            }
+        };
+        setTimeout(poll, 1000);
+    }
+
+    async function loadJobHistory() {
+        const siteId = document.getElementById('siteSelector').value;
+        const tbody = document.getElementById('jobHistoryBody');
+        if (!siteId) { tbody.innerHTML = ''; return; }
+        const r = await fetch('/api/v1/jobs?site_id=' + siteId + '&all=1', {
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        const j = await r.json();
+        tbody.innerHTML = '';
+        if (!j.success || !j.data) return;
+        const items = Array.isArray(j.data) ? j.data : [j.data];
+        items.forEach(job => {
+            const isActive = job.status === 'running' || job.status === 'queued';
+            tbody.innerHTML += `<tr>
+                <td>${escapeHTML(jobTypeLabel(job))}</td>
+                <td>${escapeHTML(jobStatusLabel(job))}</td>
+                <td>${escapeHTML(jobProgressLabel(job))}</td>
+                <td>${escapeHTML((job.error || '').substring(0, 80))}</td>
+                <td>${(job.updated_at || '').substring(0, 19).replace('T', ' ')}</td>
+                <td>${isActive
+                    ? `<button data-action="cancelJob" data-id="${escapeHTML(job.id)}" class="btn btn-danger btn-sm">${App.t('btn_stop')}</button>`
+                    : `<button data-action="deleteJob" data-id="${escapeHTML(job.id)}" class="btn btn-danger btn-sm">${App.t('btn_delete')}</button>`}</td>
+            </tr>`;
+        });
+    }
+
+    async function deleteJob(jobId) {
+        if (!(await confirmDialog(App.t('modal_job_delete') + '?', App.t('modal_delete_job')))) return;
+        await fetch('/api/v1/jobs/' + jobId, {
+            method: 'DELETE',
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        toast(App.t('job_deleted'), 'success');
+        loadJobHistory();
+        loadLatestJob();
+    }
+
+    async function cancelJob(jobId) {
+        if (!(await confirmDialog(App.t('modal_job_stop') + '?', App.t('modal_stop_job')))) return;
+        await fetch('/api/v1/jobs/' + jobId, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + getToken() }
+        });
+        toast(App.t('job_cancelled'), 'success');
+        loadJobHistory();
+        loadLatestJob();
+    }
+
+    document.addEventListener('click', (event) => {
+        const target = event.target.closest('[data-action]');
+        if (!target) return;
+        const action = target.getAttribute('data-action');
+        const id = target.getAttribute('data-id');
+        if (action === 'deleteJob' && id) deleteJob(id);
+        if (action === 'cancelJob' && id) cancelJob(id);
+    });
+
     function init() {
         document.documentElement.lang = state.currentLanguage;
         applyTranslations();
@@ -414,7 +544,7 @@
     }
 
     window.App = {
-        init, getToken, escapeHTML, toast, openModal, closeModal, confirm: confirmDialog, updatePasswordStrength, copyText, setLoading, reveal: applyRevealAnimations, getTranslation, t, setLanguage, applyTranslations, populateLanguageSelectors, loadSitesForSelector
+        init, getToken, escapeHTML, toast, openModal, closeModal, confirm: confirmDialog, updatePasswordStrength, copyText, setLoading, reveal: applyRevealAnimations, getTranslation, t, setLanguage, applyTranslations, populateLanguageSelectors, loadSitesForSelector, toProgressPercent, jobStatusLabel, jobTypeLabel, jobProgressLabel, renderJobStatus, loadLatestJob, pollJob, loadJobHistory, deleteJob, cancelJob
     };
 
     document.addEventListener('DOMContentLoaded', init);

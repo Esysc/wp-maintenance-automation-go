@@ -32,7 +32,7 @@
         <header class="page-header">
             <h1 data-i18n="page_title_backups">Backups</h1>
             <div class="header-actions">
-                <select id="siteSelector" onchange="loadBackups();loadLatestJob()" class="site-selector">
+                <select id="siteSelector" onchange="loadBackups();App.loadLatestJob();App.loadJobHistory()" class="site-selector">
                     <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
                 </select>
                 <button class="btn btn-primary" onclick="runBackup()" data-i18n="btn_run_backup_now">Run Backup Now</button>
@@ -55,56 +55,26 @@
         </div>
         <div id="backupResult" style="display:none;" class="result-box"></div>
         <div id="jobStatus" style="display:none;" class="result-box"></div>
+
+        <div class="card" style="margin-top:20px;">
+            <h2 data-i18n="job_history_title">Job History</h2>
+            <table id="jobHistoryTable">
+                <thead>
+                    <tr>
+                        <th data-i18n="table_type">Type</th>
+                        <th data-i18n="table_status">Status</th>
+                        <th data-i18n="table_progress">Progress</th>
+                        <th data-i18n="table_error">Error</th>
+                        <th data-i18n="table_updated">Updated</th>
+                        <th data-i18n="table_actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="jobHistoryBody"></tbody>
+            </table>
+        </div>
     </main>
     <script src="/static/js/app.js"></script>
     <script>
-    function toProgressPercent(job) {
-        if (!job) return 0;
-        if (typeof job.progress_percent === 'number') return Math.max(0, Math.min(100, job.progress_percent));
-        if (job.status === 'completed') return 100;
-        return 0;
-    }
-
-    function jobStatusLabel(job) {
-        return App.t('job_status_' + (job && job.status ? job.status : 'queued'));
-    }
-
-    function jobTypeLabel(job) {
-        return App.t('job_type_' + (job && job.type ? job.type : 'backup'));
-    }
-
-    function jobProgressLabel(job) {
-        if (!job) return App.t('job_progress_pending');
-        if (job.status === 'failed') return job.error || App.t('job_progress_failed');
-        if (job.status === 'completed') return App.t('job_progress_completed');
-        return App.t(job.progress || 'job_progress_pending');
-    }
-
-    function renderJobStatus(el, job) {
-        if (!el || !job) return;
-        const pct = toProgressPercent(job);
-        el.style.display = 'block';
-        el.className = 'result-box ' + (job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'info');
-        el.innerHTML = `<div class="job-progress-header"><span>${App.escapeHTML(jobTypeLabel(job))} • ${App.escapeHTML(jobStatusLabel(job))}</span><span>${pct}%</span></div>
-            <div class="job-progress-detail">${App.escapeHTML(jobProgressLabel(job))}</div>
-            <div class="job-progress-track"><div class="job-progress-fill" style="width:${pct}%"></div></div>`;
-    }
-
-    async function loadLatestJob() {
-        const siteId = document.getElementById('siteSelector').value;
-        const el = document.getElementById('jobStatus');
-        if (!siteId) { el.style.display = 'none'; return; }
-        const r = await fetch('/api/v1/jobs?site_id=' + siteId, {
-            headers: { 'Authorization': 'Bearer ' + App.getToken() }
-        });
-        const j = await r.json();
-        if (j.success && j.data) {
-            renderJobStatus(el, j.data);
-        } else {
-            el.style.display = 'none';
-        }
-    }
-
     async function loadBackups() {
         const siteId = document.getElementById('siteSelector').value;
         if (!siteId) return;
@@ -153,26 +123,6 @@
         App.setLoading('backupsBody', false, 'table');
     }
 
-    async function pollJob(jobId, el, onDone) {
-        const poll = async () => {
-            const r = await fetch('/api/v1/jobs/' + jobId, {
-                headers: { 'Authorization': 'Bearer ' + App.getToken() }
-            });
-            const j = await r.json();
-            if (j.success && j.data) {
-                renderJobStatus(el, j.data);
-                if (j.data.status === 'completed') {
-                    if (onDone) onDone();
-                    return;
-                } else if (j.data.status === 'failed') {
-                    return;
-                }
-                setTimeout(poll, 2000);
-            }
-        };
-        setTimeout(poll, 1000);
-    }
-
     async function runBackup() {
         const siteId = document.getElementById('siteSelector').value;
         if (!siteId) {
@@ -196,7 +146,7 @@
             el.textContent = App.t('backup_queued') || 'Backup queued, waiting for completion...';
             el.className = 'result-box info';
             App.toast(App.t('backup_job_started'), 'info');
-            pollJob(result.data.job_id, el, () => { loadBackups(); setTimeout(() => loadBackups(), 2000); });
+            App.pollJob(result.data.job_id, el, () => { loadBackups(); setTimeout(() => loadBackups(), 2000); });
         } else {
             el.textContent = result.error || App.t('backup_failed');
             el.className = 'result-box error';
@@ -215,8 +165,9 @@
     }
 
     App.loadSitesForSelector('siteSelector');
-    loadLatestJob();
+    App.loadLatestJob();
     loadBackups();
+    App.loadJobHistory();
     </script>
 </body>
 </html>

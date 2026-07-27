@@ -566,7 +566,11 @@ func (s *WebServer) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
 
 	if strings.HasPrefix(path, "/api/v1/jobs/") {
 		jobID := strings.TrimPrefix(path, "/api/v1/jobs/")
-		s.proxyRequestWithID(w, r, "/api/v1/jobs/", jobID)
+		if r.Method == "GET" || r.Method == "DELETE" || r.Method == "POST" {
+			s.proxyRequestWithID(w, r, "/api/v1/jobs/", jobID)
+		} else {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	}
 }
 

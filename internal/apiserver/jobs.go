@@ -103,6 +103,13 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		job.Result = result
 		s.Database.UpdateJobStatus(job.ID, "completed", job.Progress, job.ProgressPercent, result, "")
 	}
+	isCancelled := func() bool {
+		current, err := s.Database.GetJob(job.ID)
+		if err != nil {
+			return false
+		}
+		return current.Status == "cancelled"
+	}
 	cleanupRemoveAll := func(path string) {
 		if err := os.RemoveAll(path); err != nil {
 			log.Printf("cleanup error removing %s: %v", path, err)
@@ -185,13 +192,16 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		remoteDumpFile := "/tmp/wpma-dump-" + timestamp + ".sql"
 		defer sshClient.RemoveRemoteFile(remoteDumpFile)
 		dumpCmd := fmt.Sprintf(
-			"mysqldump --defaults-extra-file=%s --single-transaction --quick --lock-tables=false %s > %s",
+			"mysqldump --defaults-extra-file=%s --single-transaction --quick --lock-tables=false --no-tablespaces %s > %s 2>/dev/null; [ $? -le 3 ]",
 			shellQuote(remoteCredFile), shellQuote(dbName), shellQuote(remoteDumpFile),
 		)
 		if _, err := sshClient.RunCommand(dumpCmd); err != nil {
-			cleanupRemoveAll(workDir)
-			setError("database dump failed: " + err.Error())
-			return
+			// mysqldump exit 3 = warnings (non-fatal). Check if the dump file has content.
+			if checkErr := sshClient.RunCommandRaw(fmt.Sprintf("test -s %s", shellQuote(remoteDumpFile))); checkErr != "" {
+				cleanupRemoveAll(workDir)
+				setError("database dump failed: " + err.Error())
+				return
+			}
 		}
 
 		dumpFile := filepath.Join(dbDir, timestamp+"_"+dbName+".sql")
@@ -201,9 +211,17 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
+		if isCancelled() {
+			setStatus("cancelled", "job_progress_cancelled", 0)
+			cleanupRemoveAll(workDir)
+			return
+		}
+
 		setStatus("running", "job_progress_backup_syncing_files", 60)
 		rsyncExcludes := []string{"wp-content/cache/"}
-		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false); err != nil {
+		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false, func(relPath string) {
+			setStatus("running", "Copying: "+relPath, 60)
+		}); err != nil {
 			cleanupRemoveAll(workDir)
 			setError("file sync failed: " + err.Error())
 			return
@@ -216,6 +234,12 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 			return nil
 		})
+
+		if isCancelled() {
+			setStatus("cancelled", "job_progress_cancelled", 0)
+			cleanupRemoveAll(workDir)
+			return
+		}
 
 		resticRepo := site.ResticRepository
 		resticPassFile := site.ResticPasswordFile
@@ -313,9 +337,19 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 		defer cleanupRemoveAll(restoreDir)
 
+		if isCancelled() {
+			setStatus("cancelled", "job_progress_cancelled", 0)
+			return
+		}
+
 		setStatus("running", "job_progress_restore_restoring_snapshot", 35)
 		if err := resticClient.Restore(tuple.req.SnapshotID, restoreDir); err != nil {
 			setError("restic restore failed: " + err.Error())
+			return
+		}
+
+		if isCancelled() {
+			setStatus("cancelled", "job_progress_cancelled", 0)
 			return
 		}
 
@@ -376,6 +410,11 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 		}
 
+		if isCancelled() {
+			setStatus("cancelled", "job_progress_cancelled", 0)
+			return
+		}
+
 		if tuple.req.ApplyFiles {
 			setStatus("running", "job_progress_restore_restoring_files", 75)
 			var wpDir string
@@ -391,7 +430,9 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 
 			rsyncExcludes := []string{"wp-content/cache/"}
-			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true); err != nil {
+			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true, func(relPath string) {
+				setStatus("running", "Restoring: "+relPath, 75)
+			}); err != nil {
 				setError("file restore failed: " + err.Error())
 				return
 			}
@@ -456,6 +497,16 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 
 	siteID := r.URL.Query().Get("site_id")
 	if siteID != "" {
+		all := r.URL.Query().Get("all")
+		if all == "1" || all == "true" {
+			jobs, err := s.Database.ListJobsBySite(siteID)
+			if err != nil {
+				apiErr(w, http.StatusInternalServerError, "failed to list jobs")
+				return
+			}
+			jsonResp(w, http.StatusOK, jobs)
+			return
+		}
 		job, err := s.Database.GetLatestJobBySite(siteID)
 		if err != nil {
 			apiErr(w, http.StatusInternalServerError, "failed to get job")
@@ -479,14 +530,30 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 
 func (s *APIServer) handleJobByID(w http.ResponseWriter, r *http.Request) {
 	jobID := strings.TrimPrefix(r.URL.Path, "/api/v1/jobs/")
-	if r.Method != "GET" {
-		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+	if r.Method == "GET" {
+		job, err := s.Database.GetJob(jobID)
+		if err != nil {
+			apiErr(w, http.StatusNotFound, "job not found")
+			return
+		}
+		jsonResp(w, http.StatusOK, job)
 		return
 	}
-	job, err := s.Database.GetJob(jobID)
-	if err != nil {
-		apiErr(w, http.StatusNotFound, "job not found")
+	if r.Method == "DELETE" {
+		if err := s.Database.DeleteJob(jobID); err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to delete job")
+			return
+		}
+		jsonResp(w, http.StatusOK, map[string]interface{}{"deleted": true})
 		return
 	}
-	jsonResp(w, http.StatusOK, job)
+	if r.Method == "POST" {
+		if err := s.Database.CancelJob(jobID); err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to cancel job")
+			return
+		}
+		jsonResp(w, http.StatusOK, map[string]interface{}{"cancelled": true})
+		return
+	}
+	apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
 }

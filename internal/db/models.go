@@ -293,9 +293,37 @@ func (db *Database) GetLatestJobBySite(siteID string) (*Job, error) {
 	return job, nil
 }
 
+func (db *Database) ListJobsBySite(siteID string) ([]*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE site_id = ? ORDER BY created_at DESC LIMIT 50`
+	rows, err := db.Query(query, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	jobs := []*Job{}
+	for rows.Next() {
+		job := &Job{}
+		if err := rows.Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.ProgressPercent, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 func (db *Database) UpdateJobStatus(id, status, progress string, progressPercent int, result, errMsg string) error {
 	query := `UPDATE jobs SET status=?, progress=?, progress_percent=?, result=?, error=?, updated_at=? WHERE id=?`
 	_, err := db.Exec(query, status, progress, progressPercent, result, errMsg, time.Now(), id)
+	return err
+}
+
+func (db *Database) DeleteJob(id string) error {
+	_, err := db.Exec("DELETE FROM jobs WHERE id=?", id)
+	return err
+}
+
+func (db *Database) CancelJob(id string) error {
+	_, err := db.Exec("UPDATE jobs SET status='cancelled', updated_at=? WHERE id=?", time.Now(), id)
 	return err
 }
 

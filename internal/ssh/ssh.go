@@ -334,7 +334,7 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 	return nil
 }
 
-func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bool) error {
+func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bool, onFile func(string)) error {
 	sf, err := c.getSFTP()
 	if err != nil {
 		return err
@@ -366,7 +366,7 @@ func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bo
 
 	if sourceIsRemote {
 		wp := newDirWalker(sf)
-		return wp.walkRemote(sourceDir, destDir, isExcluded, delete)
+		return wp.walkRemote(sourceDir, destDir, isExcluded, delete, onFile)
 	}
 
 	return filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
@@ -382,6 +382,9 @@ func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bo
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if onFile != nil {
+			onFile(relPath)
 		}
 		remotePath := filepath.Join(destDir, relPath)
 
@@ -417,13 +420,13 @@ func newDirWalker(sf *sftp.Client) *dirWalker {
 	return &dirWalker{sf: sf}
 }
 
-func (w *dirWalker) walkRemote(sourceDir, destDir string, isExcluded func(string) bool, delete bool) error {
+func (w *dirWalker) walkRemote(sourceDir, destDir string, isExcluded func(string) bool, delete bool, onFile func(string)) error {
 	remoteFiles := make(map[string]bool)
 
-	return w.walkRemoteDir(sourceDir, destDir, sourceDir, remoteFiles, isExcluded, delete)
+	return w.walkRemoteDir(sourceDir, destDir, sourceDir, remoteFiles, isExcluded, delete, onFile)
 }
 
-func (w *dirWalker) walkRemoteDir(baseSource, baseDest, currentDir string, remoteFiles map[string]bool, isExcluded func(string) bool, delete bool) error {
+func (w *dirWalker) walkRemoteDir(baseSource, baseDest, currentDir string, remoteFiles map[string]bool, isExcluded func(string) bool, delete bool, onFile func(string)) error {
 	entries, err := w.sf.ReadDir(currentDir)
 	if err != nil {
 		return fmt.Errorf("cannot read remote directory %s: %w", currentDir, err)
@@ -443,10 +446,14 @@ func (w *dirWalker) walkRemoteDir(baseSource, baseDest, currentDir string, remot
 			if err := os.MkdirAll(localPath, 0755); err != nil {
 				return err
 			}
-			if err := w.walkRemoteDir(baseSource, baseDest, filepath.Join(currentDir, entry.Name()), remoteFiles, isExcluded, delete); err != nil {
+			if err := w.walkRemoteDir(baseSource, baseDest, filepath.Join(currentDir, entry.Name()), remoteFiles, isExcluded, delete, onFile); err != nil {
 				return err
 			}
 			continue
+		}
+
+		if onFile != nil {
+			onFile(relPath)
 		}
 
 		localFile, err := os.Create(localPath)

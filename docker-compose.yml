@@ -1,10 +1,34 @@
 services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: ${DB_USER:-wpmaint}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wpmaint}
+      POSTGRES_DB: ${DB_NAME:-wpmaintenance}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-wpmaint} -d ${DB_NAME:-wpmaintenance}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - wp-maintenance
+
   api:
     build: .
     ports:
       - "8081:8081"
     environment:
       - API_PORT=8081
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-wpmaint}
+      - DB_PASSWORD=${DB_PASSWORD:-wpmaint}
+      - DB_NAME=${DB_NAME:-wpmaintenance}
       - DATA_DIR=/app/data
       - LOG_LEVEL=info
       - DEBUG=false
@@ -19,6 +43,9 @@ services:
       - ~/.ssh:/root/.ssh:ro
       - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent.sock:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - wp-maintenance
@@ -36,6 +63,11 @@ services:
     environment:
       - WEB_PORT=8080
       - API_URL=http://api:8081
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:-wpmaint}
+      - DB_PASSWORD=${DB_PASSWORD:-wpmaint}
+      - DB_NAME=${DB_NAME:-wpmaintenance}
       - DATA_DIR=/app/data
       - LOG_LEVEL=info
       - DEBUG=false
@@ -119,6 +151,8 @@ services:
       - backup
 
 volumes:
+  postgres_data:
+    driver: local
   mysql_data:
     driver: local
   wordpress_data:

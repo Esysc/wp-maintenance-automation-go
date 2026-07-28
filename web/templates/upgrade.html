@@ -17,6 +17,7 @@
             <li><a href="/backups" class="{{if eq .ActivePage "backups"}}active{{end}}" data-i18n="nav_backups">Backups</a></li>
             <li><a href="/restore" class="{{if eq .ActivePage "restore"}}active{{end}}" data-i18n="nav_restore">Restore</a></li>
             <li><a href="/upgrade" class="{{if eq .ActivePage "upgrade"}}active{{end}}" data-i18n="nav_upgrade">Upgrade</a></li>
+            <li><a href="/rehearsal" class="{{if eq .ActivePage "rehearsal"}}active{{end}}" data-i18n="nav_rehearsal">Rehearsal</a></li>
             <li><a href="/snapshots" class="{{if eq .ActivePage "snapshots"}}active{{end}}" data-i18n="nav_snapshots">Snapshots</a></li>
             <li><a href="/healthcheck" class="{{if eq .ActivePage "healthcheck"}}active{{end}}" data-i18n="nav_healthcheck">Health Checks</a></li>
             <li><a href="/users" class="{{if eq .ActivePage "users"}}active{{end}}" data-i18n="nav_users">Users</a></li>
@@ -32,12 +33,12 @@
         <header class="page-header">
             <h1 data-i18n="page_title_upgrade">WordPress Upgrade</h1>
             <div class="header-actions">
-                <select id="siteSelector" onchange="App.loadLatestJob()" class="site-selector">
+                <select id="siteSelector" onchange="onSiteChange()" class="site-selector">
                     <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
                 </select>
             </div>
         </header>
-        <div class="card">
+        <div class="card" id="upgradeCard" style="display:none;">
             <p data-i18n="upgrade_pipeline_summary">This will run the full upgrade pipeline: backup -> validate -> upgrade -> healthcheck -> rollback on failure.</p>
             <form id="upgradeForm">
                 <div class="form-group">
@@ -60,6 +61,22 @@
         <div id="upgradeProgress" style="display:none;" class="card">
             <h3 data-i18n="upgrade_progress">Progress</h3>
             <pre id="upgradeLog"></pre>
+        </div>
+        <div class="card" style="margin-top:20px;display:none;" id="jobHistoryCard">
+            <h2 data-i18n="job_history_title">Job History</h2>
+            <table id="jobHistoryTable">
+                <thead>
+                    <tr>
+                        <th data-i18n="table_type">Type</th>
+                        <th data-i18n="table_status">Status</th>
+                        <th data-i18n="table_progress">Progress</th>
+                        <th data-i18n="table_error">Error</th>
+                        <th data-i18n="table_updated">Updated</th>
+                        <th data-i18n="table_actions">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="jobHistoryBody"></tbody>
+            </table>
         </div>
     </main>
     <script src="/static/js/app.js"></script>
@@ -100,8 +117,17 @@
         }
     });
 
-    App.loadSitesForSelector('siteSelector');
-    App.loadLatestJob();
+    function onSiteChange() {
+        const siteId = document.getElementById('siteSelector').value;
+        const show = siteId ? 'block' : 'none';
+        document.getElementById('upgradeCard').style.display = show;
+        document.getElementById('jobHistoryCard').style.display = show;
+        if (siteId) {
+            App.loadLatestJob('upgrade');
+            App.loadJobHistory('upgrade');
+        }
+    }
+    App.loadSitesForSelector('siteSelector', () => App.loadLatestJob('upgrade'));
     </script>
 </body>
 </html>

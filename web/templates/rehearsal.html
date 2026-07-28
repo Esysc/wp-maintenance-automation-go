@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title data-i18n="page_title_rehearsal" data-i18n-prefix="WP Maintenance Automation - ">{{.Title}} - Rehearsal</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>WP Maintenance</h2>
+        </div>
+        <ul class="nav-list">
+            <li><a href="/dashboard" class="{{if eq .ActivePage "dashboard"}}active{{end}}" data-i18n="nav_dashboard">Dashboard</a></li>
+            <li><a href="/sites" class="{{if eq .ActivePage "sites"}}active{{end}}" data-i18n="nav_sites">Sites</a></li>
+            <li><a href="/backups" class="{{if eq .ActivePage "backups"}}active{{end}}" data-i18n="nav_backups">Backups</a></li>
+            <li><a href="/restore" class="{{if eq .ActivePage "restore"}}active{{end}}" data-i18n="nav_restore">Restore</a></li>
+            <li><a href="/upgrade" class="{{if eq .ActivePage "upgrade"}}active{{end}}" data-i18n="nav_upgrade">Upgrade</a></li>
+            <li><a href="/rehearsal" class="{{if eq .ActivePage "rehearsal"}}active{{end}}" data-i18n="nav_rehearsal">Rehearsal</a></li>
+            <li><a href="/snapshots" class="{{if eq .ActivePage "snapshots"}}active{{end}}" data-i18n="nav_snapshots">Snapshots</a></li>
+            <li><a href="/healthcheck" class="{{if eq .ActivePage "healthcheck"}}active{{end}}" data-i18n="nav_healthcheck">Health Checks</a></li>
+            <li><a href="/users" class="{{if eq .ActivePage "users"}}active{{end}}" data-i18n="nav_users">Users</a></li>
+            <li><a href="/tokens" class="{{if eq .ActivePage "tokens"}}active{{end}}" data-i18n="nav_tokens">API Tokens</a></li>
+            <li><a href="/system" class="{{if eq .ActivePage "system"}}active{{end}}" data-i18n="nav_system">System</a></li>
+            <li><a href="/api/docs" class="{{if eq .ActivePage "docs"}}active{{end}}" data-i18n="nav_docs">Documentation</a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <a href="/login" onclick="document.cookie='token=; Max-Age=0; path=/'; return true;" data-i18n="nav_logout">Logout</a>
+        </div>
+    </nav>
+    <main class="main-content">
+        <header class="page-header">
+            <h1 data-i18n="page_title_rehearsal">Staging Rehearsal</h1>
+            <div class="header-actions">
+                <select id="siteSelector" onchange="onSiteChange()" class="site-selector">
+                    <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
+                </select>
+            </div>
+        </header>
+
+        <div class="card" id="controlsCard" style="display:none;">
+            <h3 data-i18n="rehearsal_start_title">Start a Rehearsal</h3>
+            <p data-i18n="rehearsal_start_desc">Restore a backup snapshot into an isolated Docker environment to test upgrades and verify site health before applying to production.</p>
+            <form id="rehearsalForm">
+                <div class="form-group">
+                    <label for="snapshotSelect" data-i18n="rehearsal_snapshot_label">Snapshot</label>
+                    <select id="snapshotSelect" required>
+                        <option value="" disabled selected data-i18n="rehearsal_select_snapshot">Select a snapshot...</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-primary" data-i18n="btn_start_rehearsal">Start Rehearsal</button>
+                </div>
+            </form>
+        </div>
+
+        <div id="rehearsalResult" style="display:none;" class="result-box"></div>
+        <div id="jobStatus" style="display:none;" class="result-box"></div>
+
+        <div id="rehearsalInfo" style="display:none;" class="card">
+            <h3 data-i18n="rehearsal_running_title">Active Rehearsal</h3>
+            <div id="rehearsalDetails"></div>
+            <div id="rehearsalStopping" style="display:none; margin-top:12px;" class="result-box info">
+                <span class="spinner"></span> <span data-i18n="rehearsal_stopping">Stopping rehearsal...</span>
+            </div>
+            <div class="form-group" style="margin-top:16px;">
+                <button id="stopRehearsalBtn" class="btn btn-danger" data-i18n="btn_stop_rehearsal">Stop Rehearsal</button>
+            </div>
+        </div>
+    </main>
+    <script src="/static/js/app.js"></script>
+    <script>
+    let activeRehearsalJobId = null;
+
+    async function loadSnapshots() {
+        const siteId = document.getElementById('siteSelector').value;
+        const select = document.getElementById('snapshotSelect');
+        if (!siteId) {
+            select.innerHTML = '<option value="" disabled selected data-i18n="rehearsal_select_snapshot">Select a snapshot...</option>';
+            return;
+        }
+        const r = await fetch('/api/v1/snapshots', { headers: { 'Authorization': 'Bearer ' + App.getToken() } });
+        const j = await r.json();
+        const snaps = (j.success && j.data) ? j.data : [];
+        const siteSnaps = snaps.filter(s => s.tags && s.tags.includes(siteId));
+        select.innerHTML = '<option value="" disabled selected>' + App.t('rehearsal_select_snapshot') + '</option>';
+        siteSnaps.forEach(s => {
+            const opt = document.createElement('option');
+            opt.value = s.short_id || s.id;
+            opt.textContent = (s.short_id || s.id).substring(0, 16) + ' — ' + (s.time || '');
+            select.appendChild(opt);
+        });
+    }
+
+    function onSiteChange() {
+        const siteId = document.getElementById('siteSelector').value;
+        document.getElementById('controlsCard').style.display = siteId ? 'block' : 'none';
+        if (siteId) {
+            loadSnapshots();
+            App.loadLatestJob('rehearsal', showCompletedRehearsal);
+        }
+    }
+
+    async function showCompletedRehearsal(jobId) {
+        if (!jobId) return;
+        const r = await fetch('/api/v1/rehearsal/' + jobId, {
+            headers: { 'Authorization': 'Bearer ' + App.getToken() }
+        });
+        const j = await r.json();
+        if (!j.success || !j.data || j.data.status !== 'completed') return;
+        onRehearsalReady(jobId);
+    }
+
+    document.getElementById('rehearsalForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const siteId = document.getElementById('siteSelector').value;
+        const snapshotId = document.getElementById('snapshotSelect').value;
+        if (!siteId || !snapshotId) {
+            App.toast(App.t('error_site_id_required'), 'error');
+            return;
+        }
+
+        const body = { site_id: siteId, snapshot_id: snapshotId };
+        const resp = await fetch('/api/v1/rehearsal', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + App.getToken()
+            },
+            body: JSON.stringify(body)
+        });
+        const result = await resp.json();
+        const el = document.getElementById('rehearsalResult');
+        el.style.display = 'block';
+
+        if (resp.ok && result.success && result.data && result.data.job_id) {
+            el.textContent = App.t('rehearsal_queued') || 'Rehearsal queued...';
+            el.className = 'result-box info';
+            App.toast(App.t('rehearsal_started'), 'info');
+            activeRehearsalJobId = result.data.job_id;
+            App.pollJob(result.data.job_id, el, () => { onRehearsalReady(result.data.job_id); });
+        } else {
+            el.textContent = result.error || App.t('rehearsal_failed');
+            el.className = 'result-box error';
+        }
+    });
+
+    async function onRehearsalReady(jobId) {
+        const r = await fetch('/api/v1/rehearsal/' + jobId, {
+            headers: { 'Authorization': 'Bearer ' + App.getToken() }
+        });
+        const j = await r.json();
+        if (!j.success || !j.data) return;
+
+        const job = j.data;
+        if (job.status !== 'completed' || !job.result) {
+            App.toast(App.t('rehearsal_not_ready'), 'error');
+            return;
+        }
+
+        let envData;
+        try { envData = JSON.parse(job.result); } catch (_) { return; }
+
+        const el = document.getElementById('rehearsalResult');
+        el.style.display = 'block';
+        el.className = 'result-box success';
+        el.innerHTML = '<strong>' + App.t('rehearsal_ready') + '</strong><br>' +
+            App.t('rehearsal_health_url') + ': <a href="' + App.escapeHTML(envData.health_url || '') + '" target="_blank" rel="noopener">' + App.escapeHTML(envData.health_url || '') + '</a><br>' +
+            (envData.wp_version ? App.t('table_wp_version') + ': ' + App.escapeHTML(envData.wp_version) + '<br>' : '') +
+            (envData.db_name ? App.t('table_database') + ': ' + App.escapeHTML(envData.db_name) : '');
+
+        const infoEl = document.getElementById('rehearsalInfo');
+        infoEl.style.display = 'block';
+        document.getElementById('rehearsalDetails').innerHTML =
+            '<p><strong>' + App.t('rehearsal_health_url') + ':</strong> <a href="' + App.escapeHTML(envData.health_url || '') + '" target="_blank" rel="noopener">' + App.escapeHTML(envData.health_url || '') + '</a></p>' +
+            '<p><strong>' + App.t('table_wp_version') + ':</strong> ' + App.escapeHTML(envData.wp_version || '-') + '</p>' +
+            '<p><strong>' + App.t('table_database') + ':</strong> ' + App.escapeHTML(envData.db_name || '-') + '</p>' +
+            '<p><strong>Snapshot:</strong> ' + App.escapeHTML(envData.snapshot_id || '-') + '</p>';
+
+        activeRehearsalJobId = jobId;
+    }
+
+    document.getElementById('stopRehearsalBtn').addEventListener('click', async () => {
+        if (!activeRehearsalJobId) return;
+        if (!(await App.confirm(App.t('rehearsal_stop_confirm'), App.t('rehearsal_stop_title')))) return;
+
+        const btn = document.getElementById('stopRehearsalBtn');
+        const stopping = document.getElementById('rehearsalStopping');
+        btn.disabled = true;
+        stopping.style.display = 'block';
+
+        try {
+            const resp = await fetch('/api/v1/rehearsal/' + activeRehearsalJobId + '/stop', {
+                method: 'POST',
+                headers: { 'Authorization': 'Bearer ' + App.getToken() }
+            });
+            const result = await resp.json();
+            if (resp.ok) {
+                App.toast(App.t('rehearsal_stopped'), 'success');
+                document.getElementById('rehearsalInfo').style.display = 'none';
+                document.getElementById('rehearsalResult').style.display = 'none';
+                activeRehearsalJobId = null;
+            } else {
+                App.toast(result.error || App.t('rehearsal_stop_failed'), 'error');
+                btn.disabled = false;
+                stopping.style.display = 'none';
+            }
+        } catch (e) {
+            App.toast(App.t('rehearsal_stop_failed'), 'error');
+            btn.disabled = false;
+            stopping.style.display = 'none';
+        }
+    });
+
+    App.loadSitesForSelector('siteSelector', () => App.loadLatestJob('rehearsal', showCompletedRehearsal));
+    </script>
+</body>
+</html>

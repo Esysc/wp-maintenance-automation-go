@@ -29,10 +29,7 @@ func setupTestAPIServer(t *testing.T) *APIServer {
 	}
 
 	secretKey := "test-secret-key"
-	authMgr, err := auth.NewAuthManager(dbPath, secretKey)
-	if err != nil {
-		t.Fatalf("Failed to create auth manager: %v", err)
-	}
+	authMgr := auth.NewAuthManager(database, secretKey)
 
 	checker := healthcheck.NewChecker()
 

@@ -23,7 +23,7 @@ services:
   wp:
     build:
       context: ${BUILD_CONTEXT:-.}
-      dockerfile: staging/Dockerfile.wp
+      dockerfile: Dockerfile.wp
       args:
         WP_VERSION: ${WP_VERSION:-6.6.2}
         WP_PHP_VERSION: ${WP_PHP_VERSION:-8.2}

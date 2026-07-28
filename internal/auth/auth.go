@@ -41,16 +41,11 @@ type AuthManager struct {
 	secretKey string
 }
 
-func NewAuthManager(dbPath string, secretKey string) (*AuthManager, error) {
-	database, err := db.New(dbPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create database: %w", err)
-	}
-
+func NewAuthManager(database *db.Database, secretKey string) *AuthManager {
 	return &AuthManager{
 		db:        database,
 		secretKey: secretKey,
-	}, nil
+	}
 }
 
 // InitializeAdmin creates the admin user if it doesn't exist

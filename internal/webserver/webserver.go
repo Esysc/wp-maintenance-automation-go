@@ -78,6 +78,7 @@ func Run() {
 	mux.HandleFunc("/upgrade", s.authMiddleware(s.handleUpgradePage))
 	mux.HandleFunc("/snapshots", s.authMiddleware(s.handleSnapshotsPage))
 	mux.HandleFunc("/healthcheck", s.authMiddleware(s.handleHealthcheckPage))
+	mux.HandleFunc("/rehearsal", s.authMiddleware(s.handleRehearsalPage))
 	mux.HandleFunc("/users", s.authMiddleware(s.handleUsersPage))
 	mux.HandleFunc("/tokens", s.authMiddleware(s.handleTokensPage))
 	mux.HandleFunc("/sites", s.authMiddleware(s.handleSitesPage))
@@ -111,6 +112,8 @@ func Run() {
 	mux.HandleFunc("/api/v1/sites/", s.authMiddleware(s.handleAPISites))
 	mux.HandleFunc("/api/v1/snapshots", s.authMiddleware(s.handleAPISnapshots))
 	mux.HandleFunc("/api/v1/snapshots/", s.authMiddleware(s.handleAPISnapshots))
+	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleAPIRehearsal))
+	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/docs/", s.handleDocs)
@@ -343,6 +346,13 @@ func (s *WebServer) handleHealthcheckPage(w http.ResponseWriter, r *http.Request
 	s.renderTemplate(w, "healthcheck.html", data)
 }
 
+func (s *WebServer) handleRehearsalPage(w http.ResponseWriter, r *http.Request) {
+	data := map[string]interface{}{
+		"ActivePage": "rehearsal",
+	}
+	s.renderTemplate(w, "rehearsal.html", data)
+}
+
 func (s *WebServer) handleUsersPage(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"ActivePage": "users",
@@ -555,6 +565,14 @@ func (s *WebServer) handleAPISites(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPISnapshots(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/snapshots")
+}
+
+func (s *WebServer) handleAPIRehearsal(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/rehearsal")
+}
+
+func (s *WebServer) handleAPIRehearsalByID(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, r.URL.Path)
 }
 
 func (s *WebServer) handleAPIJobs(w http.ResponseWriter, r *http.Request) {

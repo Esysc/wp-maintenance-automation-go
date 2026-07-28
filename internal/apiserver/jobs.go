@@ -3,6 +3,7 @@ package apiserver
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -30,6 +31,7 @@ type jobRequest struct {
 }
 
 func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) {
+	reqJSON, _ := json.Marshal(req)
 	job := &db.Job{
 		ID:              auth.GenerateID(),
 		Type:            jobType,
@@ -37,6 +39,7 @@ func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) 
 		Status:          "queued",
 		Progress:        "job_progress_queued",
 		ProgressPercent: 0,
+		Result:          string(reqJSON),
 	}
 	if err := s.Database.CreateJob(job); err != nil {
 		return nil, err
@@ -57,8 +60,25 @@ type jobTuple struct {
 func (s *APIServer) startWorker() {
 	s.workerOnce.Do(func() {
 		go s.workerLoop()
+		s.recoverQueuedJobs()
 		log.Printf("background job worker started")
 	})
+}
+
+func (s *APIServer) recoverQueuedJobs() {
+	jobs, err := s.Database.ListQueuedJobs()
+	if err != nil {
+		log.Printf("failed to recover queued jobs: %v", err)
+		return
+	}
+	for _, j := range jobs {
+		req := jobRequest{SiteID: j.SiteID}
+		if j.Result != "" {
+			json.Unmarshal([]byte(j.Result), &req)
+		}
+		s.jobQueue <- &jobTuple{job: j, req: req}
+		log.Printf("recovered queued job %s (%s)", j.ID, j.Type)
+	}
 }
 
 func (s *APIServer) workerLoop() {
@@ -164,7 +184,10 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "job_progress_backup_reading_wp_version", 20)
-		wpVersion, _ := sshClient.WPCLI(wpRoot, "core version")
+		wpVersion, err := sshClient.GetWpVersion(wpRoot)
+		if err != nil {
+			log.Printf("warning: could not detect WordPress version: %v", err)
+		}
 
 		setStatus("running", "job_progress_backup_parsing_db_config", 30)
 		dbName, dbUser, dbPassword, dbHost, err := sshClient.ParseDBConfig(wpRoot)
@@ -218,22 +241,24 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "job_progress_backup_syncing_files", 60)
+		totalFiles, _ := sshClient.CountRemoteFiles(wpRoot + "/")
+		if totalFiles < 1 {
+			totalFiles = 1
+		}
+		fileCount := 0
 		rsyncExcludes := []string{"wp-content/cache/"}
 		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false, func(relPath string) {
-			setStatus("running", "Copying: "+relPath, 60)
+			fileCount++
+			pct := 60
+			if totalFiles > 0 {
+				pct = 60 + int(float64(fileCount)/float64(totalFiles)*15)
+			}
+			setStatus("running", "Copying: "+relPath, pct)
 		}); err != nil {
 			cleanupRemoveAll(workDir)
 			setError("file sync failed: " + err.Error())
 			return
 		}
-
-		fileCount := 0
-		filepath.Walk(wpDir, func(path string, info os.FileInfo, err error) error {
-			if err == nil && !info.IsDir() {
-				fileCount++
-			}
-			return nil
-		})
 
 		if isCancelled() {
 			setStatus("cancelled", "job_progress_cancelled", 0)
@@ -264,7 +289,8 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		resticTags := []string{site.ID, site.Name, "backup:" + timestamp}
-		if _, err := resticClient.Backup(workDir, resticTags); err != nil {
+		resticSnap, err := resticClient.Backup(workDir, resticTags)
+		if err != nil {
 			cleanupRemoveAll(workDir)
 			setError("restic backup failed: " + err.Error())
 			return
@@ -277,17 +303,23 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 		}
 
+		snapshotID := ""
+		if resticSnap != nil {
+			snapshotID = resticSnap.ShortID
+		}
+
 		backupRecord := &db.Backup{
-			ID:        auth.GenerateID(),
-			SiteID:    job.SiteID,
-			Timestamp: timestamp,
-			Host:      site.WPSSHHost,
-			WPRoot:    wpRoot,
-			WPVersion: wpVersion,
-			DBName:    dbName,
-			DBHost:    dbHost,
-			DumpFile:  dumpFile,
-			FileCount: fileCount,
+			ID:         auth.GenerateID(),
+			SiteID:     job.SiteID,
+			Timestamp:  timestamp,
+			Host:       site.WPSSHHost,
+			WPRoot:     wpRoot,
+			WPVersion:  wpVersion,
+			DBName:     dbName,
+			DBHost:     dbHost,
+			DumpFile:   dumpFile,
+			FileCount:  fileCount,
+			SnapshotID: snapshotID,
 		}
 		if err := s.Database.CreateBackup(backupRecord); err != nil {
 			setError("failed to record backup: " + err.Error())
@@ -429,9 +461,25 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 				wpDir = restoreDir
 			}
 
+			totalFiles := 0
+			filepath.WalkDir(wpDir, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					totalFiles++
+				}
+				return nil
+			})
+			if totalFiles < 1 {
+				totalFiles = 1
+			}
+			fileCount := 0
 			rsyncExcludes := []string{"wp-content/cache/"}
 			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true, func(relPath string) {
-				setStatus("running", "Restoring: "+relPath, 75)
+				fileCount++
+				pct := 75
+				if totalFiles > 0 {
+					pct = 75 + int(float64(fileCount)/float64(totalFiles)*25)
+				}
+				setStatus("running", "Restoring: "+relPath, pct)
 			}); err != nil {
 				setError("file restore failed: " + err.Error())
 				return
@@ -484,6 +532,57 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		reportJSON, _ := json.Marshal(report)
 		setResult(fmt.Sprintf(`{"status":"%s","report":%s}`, status, string(reportJSON)))
 
+	case "rehearsal":
+		if s.StagingManager == nil {
+			setError("staging manager not available")
+			return
+		}
+
+		snapshotID := tuple.req.SnapshotID
+		if snapshotID == "" {
+			setError("snapshot_id is required")
+			return
+		}
+
+		setStatus("running", "Creating staging environment...", 10)
+		resticRepo := site.ResticRepository
+		resticPassFile := site.ResticPasswordFile
+		if resticRepo == "" && s.Restic != nil {
+			resticRepo = s.Restic.Repository
+		}
+		if resticPassFile == "" && s.Restic != nil {
+			resticPassFile = s.Restic.PasswordFile
+		}
+		if resticRepo == "" {
+			setError("no restic repository configured")
+			return
+		}
+
+		resticClient, err := restic.NewClient(resticRepo, resticPassFile)
+		if err != nil {
+			setError("restic configuration error")
+			return
+		}
+
+		setStatus("running", "Restoring snapshot to staging...", 30)
+		env, err := s.StagingManager.Create(snapshotID, resticClient)
+		if err != nil {
+			setError("failed to create staging environment: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Staging environment ready", 90)
+		resultJSON, _ := json.Marshal(map[string]interface{}{
+			"health_url":   env.HealthURL,
+			"compose_file": env.ComposeFile,
+			"project_name": env.ProjectName,
+			"restore_dir":  env.RestoreDir,
+			"wp_version":   env.WPVersion,
+			"db_name":      env.DBName,
+			"snapshot_id":  snapshotID,
+		})
+		setResult(string(resultJSON))
+
 	default:
 		setError("unknown job type: " + job.Type)
 	}
@@ -496,10 +595,12 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	siteID := r.URL.Query().Get("site_id")
+	jobType := r.URL.Query().Get("type")
+	all := r.URL.Query().Get("all")
+
 	if siteID != "" {
-		all := r.URL.Query().Get("all")
 		if all == "1" || all == "true" {
-			jobs, err := s.Database.ListJobsBySite(siteID)
+			jobs, err := s.Database.ListJobsBySiteWithType(siteID, jobType)
 			if err != nil {
 				apiErr(w, http.StatusInternalServerError, "failed to list jobs")
 				return
@@ -507,7 +608,7 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 			jsonResp(w, http.StatusOK, jobs)
 			return
 		}
-		job, err := s.Database.GetLatestJobBySite(siteID)
+		job, err := s.Database.GetLatestJobBySiteWithType(siteID, jobType)
 		if err != nil {
 			apiErr(w, http.StatusInternalServerError, "failed to get job")
 			return
@@ -520,12 +621,26 @@ func (s *APIServer) handleJobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jobs, err := s.Database.ListJobs()
-	if err != nil {
-		apiErr(w, http.StatusInternalServerError, "failed to list jobs")
+	if all == "1" || all == "true" {
+		jobs, err := s.Database.ListJobs()
+		if err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to list jobs")
+			return
+		}
+		jsonResp(w, http.StatusOK, jobs)
 		return
 	}
-	jsonResp(w, http.StatusOK, jobs)
+
+	job, err := s.Database.GetLatestJobByType(jobType)
+	if err != nil {
+		apiErr(w, http.StatusInternalServerError, "failed to get latest job")
+		return
+	}
+	if job == nil {
+		jsonResp(w, http.StatusOK, nil)
+		return
+	}
+	jsonResp(w, http.StatusOK, job)
 }
 
 func (s *APIServer) handleJobByID(w http.ResponseWriter, r *http.Request) {

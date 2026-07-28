@@ -158,14 +158,14 @@ func (db *Database) DeleteSite(id string) error {
 
 func (db *Database) CreateBackup(backup *Backup) error {
 	query := `
-		INSERT INTO backups (id, site_id, timestamp, host, wp_root, wp_version, db_name, db_host, db_version, dump_file, file_count, rs_exclude, retention, ssh_host, ssh_user, ssh_port, backup_size, checksum, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO backups (id, site_id, timestamp, host, wp_root, wp_version, db_name, db_host, db_version, dump_file, file_count, rs_exclude, retention, ssh_host, ssh_user, ssh_port, backup_size, checksum, snapshot_id, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 	_, err := db.Exec(query,
 		backup.ID, backup.SiteID, backup.Timestamp, backup.Host, backup.WPRoot, backup.WPVersion,
 		backup.DBName, backup.DBHost, backup.DBVersion, backup.DumpFile, backup.FileCount,
 		backup.RSExclude, backup.Retention, backup.SSHHost, backup.SSHUser, backup.SSHPort,
-		backup.BackupSize, backup.Checksum, time.Now().Format("2006-01-02 15:04:05"),
+		backup.BackupSize, backup.Checksum, backup.SnapshotID, time.Now().Format("2006-01-02 15:04:05"),
 	)
 	return err
 }
@@ -173,7 +173,7 @@ func (db *Database) CreateBackup(backup *Backup) error {
 func (db *Database) GetBackupsBySite(siteID string) ([]*Backup, error) {
 	query := `
 		SELECT id, site_id, timestamp, host, wp_root, wp_version, db_name, db_host, db_version, dump_file,
-		       file_count, rs_exclude, retention, ssh_host, ssh_user, ssh_port, backup_size, checksum, created_at
+		       file_count, rs_exclude, retention, ssh_host, ssh_user, ssh_port, backup_size, checksum, snapshot_id, created_at
 		FROM backups WHERE site_id = ? ORDER BY timestamp DESC
 	`
 	rows, err := db.Query(query, siteID)
@@ -189,7 +189,7 @@ func (db *Database) GetBackupsBySite(siteID string) ([]*Backup, error) {
 			&backup.ID, &backup.SiteID, &backup.Timestamp, &backup.Host, &backup.WPRoot, &backup.WPVersion,
 			&backup.DBName, &backup.DBHost, &backup.DBVersion, &backup.DumpFile,
 			&backup.FileCount, &backup.RSExclude, &backup.Retention, &backup.SSHHost, &backup.SSHUser, &backup.SSHPort,
-			&backup.BackupSize, &backup.Checksum, &backup.CreatedAt,
+			&backup.BackupSize, &backup.Checksum, &backup.SnapshotID, &backup.CreatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -223,6 +223,7 @@ type Backup struct {
 	SSHPort    int    `json:"ssh_port"`
 	BackupSize int64  `json:"backup_size"`
 	Checksum   string `json:"checksum"`
+	SnapshotID string `json:"snapshot_id"`
 	CreatedAt  string `json:"created_at"`
 }
 
@@ -261,6 +262,25 @@ func (db *Database) GetJob(id string) (*Job, error) {
 	return job, nil
 }
 
+func (db *Database) ListQueuedJobs() ([]*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE status = 'queued' ORDER BY created_at ASC`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	jobs := []*Job{}
+	for rows.Next() {
+		job := &Job{}
+		if err := rows.Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.ProgressPercent, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt); err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs, nil
+}
+
 func (db *Database) ListJobs() ([]*Job, error) {
 	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT 50`
 	rows, err := db.Query(query)
@@ -281,9 +301,32 @@ func (db *Database) ListJobs() ([]*Job, error) {
 }
 
 func (db *Database) GetLatestJobBySite(siteID string) (*Job, error) {
-	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE site_id = ? ORDER BY created_at DESC LIMIT 1`
+	return db.GetLatestJobBySiteWithType(siteID, "")
+}
+
+func (db *Database) GetLatestJobBySiteWithType(siteID, jobType string) (*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE site_id = ?`
+	args := []interface{}{siteID}
+	if jobType != "" {
+		query += ` AND type = ?`
+		args = append(args, jobType)
+	}
+	query += ` ORDER BY created_at DESC LIMIT 1`
 	job := &Job{}
-	err := db.QueryRow(query, siteID).Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.ProgressPercent, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt)
+	err := db.QueryRow(query, args...).Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.ProgressPercent, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return job, nil
+}
+
+func (db *Database) GetLatestJobByType(jobType string) (*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE type = ? ORDER BY created_at DESC LIMIT 1`
+	job := &Job{}
+	err := db.QueryRow(query, jobType).Scan(&job.ID, &job.Type, &job.SiteID, &job.Status, &job.Progress, &job.ProgressPercent, &job.Result, &job.Error, &job.CreatedAt, &job.UpdatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -294,8 +337,18 @@ func (db *Database) GetLatestJobBySite(siteID string) (*Job, error) {
 }
 
 func (db *Database) ListJobsBySite(siteID string) ([]*Job, error) {
-	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE site_id = ? ORDER BY created_at DESC LIMIT 50`
-	rows, err := db.Query(query, siteID)
+	return db.ListJobsBySiteWithType(siteID, "")
+}
+
+func (db *Database) ListJobsBySiteWithType(siteID, jobType string) ([]*Job, error) {
+	query := `SELECT id, type, site_id, status, progress, progress_percent, result, error, created_at, updated_at FROM jobs WHERE site_id = ?`
+	args := []interface{}{siteID}
+	if jobType != "" {
+		query += ` AND type = ?`
+		args = append(args, jobType)
+	}
+	query += ` ORDER BY created_at DESC LIMIT 50`
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}

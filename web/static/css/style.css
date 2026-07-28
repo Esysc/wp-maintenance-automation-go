@@ -1010,6 +1010,27 @@ pre {
 	}
 }
 
+.spinner {
+	display: inline-block;
+	width: 1rem;
+	height: 1rem;
+	border: 2.5px solid rgba(99, 102, 241, 0.3);
+	border-top-color: var(--primary);
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+	vertical-align: middle;
+	margin-right: 0.35rem;
+}
+
+.result-box.info .spinner {
+	border-color: rgba(59, 130, 246, 0.3);
+	border-top-color: #2563eb;
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
 @media (max-width: 640px) {
 	.btn {
 		width: 100%;

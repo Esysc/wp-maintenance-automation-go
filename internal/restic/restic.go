@@ -3,6 +3,7 @@ package restic
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -63,37 +64,44 @@ func (r *ResticClient) Backup(path string, tags []string) (*Snapshot, error) {
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return nil, fmt.Errorf("restic backup failed: %w\nOutput: %s", err, string(output))
+		outputStr := string(output)
+		log.Printf("restic backup exited with %v, attempting to parse snapshot from output", err)
+		snap := tryParseSnapshot(outputStr, tags)
+		if snap != nil {
+			return snap, nil
+		}
+		return nil, fmt.Errorf("restic backup failed: %w\nOutput: %s", err, outputStr)
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	snap := tryParseSnapshot(string(output), tags)
+	if snap != nil {
+		return snap, nil
+	}
+
+	return nil, fmt.Errorf("restic backup produced no snapshot output")
+}
+
+func tryParseSnapshot(output string, tags []string) *Snapshot {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
 	var lastLine string
 	for _, line := range lines {
 		if line != "" {
 			lastLine = line
 		}
 	}
+	if lastLine == "" {
+		return nil
+	}
 
 	var backupResult BackupResult
 	if err := json.Unmarshal([]byte(lastLine), &backupResult); err != nil {
-		return nil, fmt.Errorf("failed to parse backup result: %w", err)
-	}
-
-	snapshots, err := r.Snapshots()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, snap := range snapshots {
-		if strings.HasPrefix(snap.ID, backupResult.SnapshotID) {
-			return &snap, nil
-		}
+		return nil
 	}
 
 	return &Snapshot{
 		ID:   backupResult.SnapshotID,
 		Tags: tags,
-	}, nil
+	}
 }
 
 func (r *ResticClient) Snapshots() ([]Snapshot, error) {

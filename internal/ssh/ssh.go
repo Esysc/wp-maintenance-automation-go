@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"archive/tar"
 	"fmt"
 	"io"
 	"io/fs"
@@ -212,6 +213,45 @@ func (c *Client) WPCLI(wpRoot, args string) (string, error) {
 	return c.RunCommand(fmt.Sprintf("cd '%s' && %s %s", wpRoot, "wp", args))
 }
 
+func (c *Client) GetWpVersion(wpRoot string) (string, error) {
+	ver, err := c.WPCLI(wpRoot, "core version")
+	if err == nil {
+		ver = strings.TrimSpace(ver)
+		if ver != "" {
+			return ver, nil
+		}
+	}
+
+	content, err := c.ReadRemoteFile(filepath.Join(wpRoot, "wp-includes", "version.php"))
+	if err != nil {
+		return "", fmt.Errorf("could not determine WordPress version: %w", err)
+	}
+
+	ver = parseWpVersion(content)
+	if ver == "" {
+		return "", fmt.Errorf("could not find WordPress version in version.php")
+	}
+	return ver, nil
+}
+
+func parseWpVersion(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "$wp_version") {
+			start := strings.Index(line, "'")
+			if start == -1 {
+				continue
+			}
+			end := strings.Index(line[start+1:], "'")
+			if end == -1 {
+				continue
+			}
+			return line[start+1 : start+1+end]
+		}
+	}
+	return ""
+}
+
 func (c *Client) ParseDBConfig(wpRoot string) (string, string, string, string, error) {
 	out, err := c.RunCommand(fmt.Sprintf(
 		"grep -E \"^define\\([[:space:]]*'DB_(NAME|USER|PASSWORD|HOST)'\" '%s/wp-config.php'", wpRoot,
@@ -335,16 +375,15 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 }
 
 func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bool, onFile func(string)) error {
-	sf, err := c.getSFTP()
-	if err != nil {
-		return err
-	}
-
 	sourceIsRemote := !isLocalPath(sourceDir)
 	destIsRemote := !isLocalPath(destDir)
 
 	if sourceIsRemote == destIsRemote {
 		return fmt.Errorf("SyncDir requires one local and one remote path")
+	}
+
+	if err := c.connect(); err != nil {
+		return err
 	}
 
 	excludeSet := make(map[string]bool)
@@ -365,11 +404,120 @@ func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bo
 	}
 
 	if sourceIsRemote {
-		wp := newDirWalker(sf)
-		return wp.walkRemote(sourceDir, destDir, isExcluded, delete, onFile)
+		return c.downloadTar(sourceDir, destDir, isExcluded, onFile)
+	}
+	return c.uploadTar(sourceDir, destDir, isExcluded, delete, onFile)
+}
+
+func (c *Client) downloadTar(sourceDir, destDir string, isExcluded func(string) bool, onFile func(string)) error {
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	cmd := fmt.Sprintf("tar cf - -C %s .", shellQuote(sourceDir))
+
+	stdout, err := session.StdoutPipe()
+	if err != nil {
+		return err
 	}
 
-	return filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
+	if err := session.Start(cmd); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(destDir, 0755); err != nil {
+		return err
+	}
+
+	tr := tar.NewReader(stdout)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("tar read error: %w", err)
+		}
+
+		name := filepath.Clean(header.Name)
+		if name == "." {
+			continue
+		}
+		if isExcluded(name) {
+			continue
+		}
+
+		if onFile != nil {
+			onFile(name)
+		}
+
+		target := filepath.Join(destDir, name)
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, os.FileMode(header.Mode&0o777)); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, os.FileMode(header.Mode&0o777))
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(f, tr)
+			f.Close()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return session.Wait()
+}
+
+func (c *Client) uploadTar(sourceDir, destDir string, isExcluded func(string) bool, delete bool, onFile func(string)) error {
+	if _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", shellQuote(destDir))); err != nil {
+		return fmt.Errorf("cannot create remote directory: %w", err)
+	}
+
+	var remoteFiles map[string]struct{}
+	if delete {
+		remoteFiles = make(map[string]struct{})
+		out, err := c.RunCommand(fmt.Sprintf("cd %s && find . -type f 2>/dev/null || true", shellQuote(destDir)))
+		if err == nil && out != "" {
+			for _, f := range strings.Split(out, "\n") {
+				f = strings.TrimPrefix(strings.TrimSpace(f), "./")
+				if f != "" {
+					remoteFiles[f] = struct{}{}
+				}
+			}
+		}
+	}
+
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+
+	stdin, err := session.StdinPipe()
+	if err != nil {
+		return err
+	}
+
+	cmd := fmt.Sprintf("tar xf - -C %s", shellQuote(destDir))
+	if err := session.Start(cmd); err != nil {
+		return err
+	}
+
+	tw := tar.NewWriter(stdin)
+	sentFiles := make(map[string]struct{})
+
+	err = filepath.WalkDir(sourceDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -383,104 +531,84 @@ func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bo
 			}
 			return nil
 		}
+
 		if onFile != nil {
 			onFile(relPath)
 		}
-		remotePath := filepath.Join(destDir, relPath)
 
-		if d.IsDir() {
-			return sf.MkdirAll(remotePath)
-		}
-
-		localFile, err := os.Open(path)
+		info, err := os.Stat(path)
 		if err != nil {
 			return err
 		}
-		defer localFile.Close()
 
-		if err := sf.MkdirAll(filepath.Dir(remotePath)); err != nil {
-			return err
-		}
-		remoteFile, err := sf.Create(remotePath)
+		header, err := tar.FileInfoHeader(info, "")
 		if err != nil {
 			return err
 		}
-		defer remoteFile.Close()
+		header.Name = relPath
 
-		_, err = io.Copy(remoteFile, localFile)
+		if info.IsDir() {
+			header.Name += "/"
+			return tw.WriteHeader(header)
+		}
+
+		sentFiles[relPath] = struct{}{}
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer f.Close()
+		_, err = io.Copy(tw, f)
 		return err
 	})
-}
-
-type dirWalker struct {
-	sf *sftp.Client
-}
-
-func newDirWalker(sf *sftp.Client) *dirWalker {
-	return &dirWalker{sf: sf}
-}
-
-func (w *dirWalker) walkRemote(sourceDir, destDir string, isExcluded func(string) bool, delete bool, onFile func(string)) error {
-	remoteFiles := make(map[string]bool)
-
-	return w.walkRemoteDir(sourceDir, destDir, sourceDir, remoteFiles, isExcluded, delete, onFile)
-}
-
-func (w *dirWalker) walkRemoteDir(baseSource, baseDest, currentDir string, remoteFiles map[string]bool, isExcluded func(string) bool, delete bool, onFile func(string)) error {
-	entries, err := w.sf.ReadDir(currentDir)
 	if err != nil {
-		return fmt.Errorf("cannot read remote directory %s: %w", currentDir, err)
+		return err
 	}
 
-	for _, entry := range entries {
-		relPath, _ := filepath.Rel(baseSource, filepath.Join(currentDir, entry.Name()))
-		if isExcluded(relPath) {
-			continue
-		}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if err := stdin.Close(); err != nil {
+		return err
+	}
 
-		remoteFiles[relPath] = true
+	if err := session.Wait(); err != nil {
+		return err
+	}
 
-		localPath := filepath.Join(baseDest, relPath)
-
-		if entry.IsDir() {
-			if err := os.MkdirAll(localPath, 0755); err != nil {
-				return err
+	if delete && remoteFiles != nil {
+		for f := range remoteFiles {
+			if _, sent := sentFiles[f]; !sent {
+				c.RunCommand(fmt.Sprintf("rm -f %s", shellQuote(filepath.Join(destDir, f))))
 			}
-			if err := w.walkRemoteDir(baseSource, baseDest, filepath.Join(currentDir, entry.Name()), remoteFiles, isExcluded, delete, onFile); err != nil {
-				return err
-			}
-			continue
 		}
-
-		if onFile != nil {
-			onFile(relPath)
-		}
-
-		localFile, err := os.Create(localPath)
-		if err != nil {
-			return err
-		}
-
-		remoteFile, err := w.sf.Open(filepath.Join(currentDir, entry.Name()))
-		if err != nil {
-			localFile.Close()
-			return err
-		}
-
-		_, err = io.Copy(localFile, remoteFile)
-		remoteFile.Close()
-		localFile.Close()
-		if err != nil {
-			return err
-		}
+		c.RunCommand(fmt.Sprintf("find %s -type d -empty -delete 2>/dev/null || true", shellQuote(destDir)))
 	}
 
 	return nil
 }
 
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func isLocalPath(p string) bool {
 	_, err := os.Stat(filepath.Dir(p))
 	return err == nil
+}
+
+func (c *Client) CountRemoteFiles(dir string) (int, error) {
+	out, err := c.RunCommand(fmt.Sprintf("find %s -type f 2>/dev/null | wc -l", shellQuote(dir)))
+	if err != nil {
+		return 0, err
+	}
+	count := 0
+	fmt.Sscanf(strings.TrimSpace(out), "%d", &count)
+	return count, nil
 }
 
 func (c *Client) DetectWPRoot() (string, error) {

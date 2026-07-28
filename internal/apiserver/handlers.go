@@ -896,3 +896,157 @@ func (s *APIServer) handleStagingCleanup(w http.ResponseWriter, r *http.Request)
 		"message": "staging environment cleaned up",
 	})
 }
+
+func (s *APIServer) handleRehearsal(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req jobRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.SiteID == "" {
+		apiErr(w, http.StatusBadRequest, "site_id is required")
+		return
+	}
+
+	if req.SnapshotID == "" {
+		apiErr(w, http.StatusBadRequest, "snapshot_id is required")
+		return
+	}
+
+	job, err := s.enqueueJob("rehearsal", req)
+	if err != nil {
+		apiErr(w, http.StatusServiceUnavailable, "failed to enqueue rehearsal job: "+err.Error())
+		return
+	}
+
+	jsonResp(w, http.StatusAccepted, map[string]interface{}{
+		"message": "rehearsal queued",
+		"job_id":  job.ID,
+		"status":  "queued",
+	})
+}
+
+func (s *APIServer) handleRehearsalByID(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/rehearsal/")
+
+	if strings.HasSuffix(path, "/stop") {
+		if r.Method != "POST" {
+			apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		jobID := strings.TrimSuffix(path, "/stop")
+		s.handleRehearsalStop(w, r, jobID)
+		return
+	}
+
+	if strings.HasSuffix(path, "/wpcli") {
+		if r.Method != "POST" {
+			apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		jobID := strings.TrimSuffix(path, "/wpcli")
+		s.handleRehearsalWPCLI(w, r, jobID)
+		return
+	}
+
+	// GET /api/v1/rehearsal/:job_id - get rehearsal job
+	if r.Method == "GET" {
+		job, err := s.Database.GetJob(path)
+		if err != nil {
+			apiErr(w, http.StatusNotFound, "rehearsal job not found")
+			return
+		}
+		jsonResp(w, http.StatusOK, job)
+		return
+	}
+
+	apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+}
+
+func (s *APIServer) handleRehearsalStop(w http.ResponseWriter, r *http.Request, jobID string) {
+	job, err := s.Database.GetJob(jobID)
+	if err != nil {
+		apiErr(w, http.StatusNotFound, "rehearsal job not found")
+		return
+	}
+
+	if job.Status == "cancelled" || job.Status == "failed" {
+		jsonResp(w, http.StatusOK, map[string]interface{}{"message": "rehearsal already stopped"})
+		return
+	}
+
+	if job.Result != "" {
+		var envData struct {
+			ComposeFile string `json:"compose_file"`
+			ProjectName string `json:"project_name"`
+			RestoreDir  string `json:"restore_dir"`
+			HealthURL   string `json:"health_url"`
+		}
+		if err := json.Unmarshal([]byte(job.Result), &envData); err == nil && envData.ComposeFile != "" {
+			env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, envData.RestoreDir, envData.HealthURL)
+			if s.StagingManager != nil {
+				s.StagingManager.Destroy(env)
+			}
+		}
+	}
+
+	s.Database.CancelJob(jobID)
+	jsonResp(w, http.StatusOK, map[string]interface{}{"message": "rehearsal stopped"})
+}
+
+func (s *APIServer) handleRehearsalWPCLI(w http.ResponseWriter, r *http.Request, jobID string) {
+	job, err := s.Database.GetJob(jobID)
+	if err != nil {
+		apiErr(w, http.StatusNotFound, "rehearsal job not found")
+		return
+	}
+
+	if job.Status != "completed" || job.Result == "" {
+		apiErr(w, http.StatusBadRequest, "rehearsal not ready")
+		return
+	}
+
+	var req struct {
+		Args string `json:"args"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiErr(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.Args == "" {
+		apiErr(w, http.StatusBadRequest, "args is required")
+		return
+	}
+
+	var envData struct {
+		ComposeFile string `json:"compose_file"`
+		ProjectName string `json:"project_name"`
+	}
+	if err := json.Unmarshal([]byte(job.Result), &envData); err != nil || envData.ComposeFile == "" {
+		apiErr(w, http.StatusInternalServerError, "invalid rehearsal data")
+		return
+	}
+
+	env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, "", "")
+	output, err := env.WPCLI(req.Args)
+	if err != nil {
+		jsonResp(w, http.StatusOK, map[string]interface{}{
+			"success": false,
+			"output":  output,
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"output":  output,
+	})
+}

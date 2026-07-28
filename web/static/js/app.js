@@ -5,6 +5,7 @@
         '/backups': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 8h-1V6a6 6 0 10-12 0v2H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2v-9a2 2 0 00-2-2zm-7 8a3 3 0 110-6 3 3 0 010 6zm4-8H8V6a4 4 0 118 0v2z"/></svg>',
         '/restore': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5V1L7 6l5 5V7a5 5 0 11-5 5H5a7 7 0 107-7z"/></svg>',
         '/upgrade': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 3l7 7h-4v7h-6v-7H6l7-7zm-9 16h16v2H4v-2z"/></svg>',
+        '/rehearsal': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9-4.03-9-9-9zm0 16c-3.86 0-7-3.14-7-7s3.14-7 7-7 7 3.14 7 7-3.14 7-7 7zm1-11h-2v6h2V8zm0 8h-2v2h2v-2z"/></svg>',
         '/snapshots': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 00-9 9h2a7 7 0 1114 0h2a9 9 0 00-9-9zm-1 5h2v5h-2V8zm0 7h2v2h-2v-2z"/></svg>',
         '/healthcheck': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h4l2-4 3 8 2-4h7v-2h-6l-3 6-3-8-2 4H3v2z"/></svg>',
         '/users': '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.7 0 3-1.3 3-3s-1.3-3-3-3-3 1.3-3 3 1.3 3 3 3zm-8 0c1.7 0 3-1.3 3-3S9.7 5 8 5 5 6.3 5 8s1.3 3 3 3zm0 2c-2.3 0-7 1.2-7 3.5V19h14v-2.5C15 14.2 10.3 13 8 13zm8 0c-.3 0-.7 0-1.1.1 1.2.8 2.1 1.9 2.1 3.4V19h6v-2.5c0-2.3-4.7-3.5-7-3.5z"/></svg>',
@@ -198,6 +199,7 @@
             else if (href === '/restore') textKey = 'nav_restore';
             else if (href === '/upgrade') textKey = 'nav_upgrade';
             else if (href === '/snapshots') textKey = 'nav_snapshots';
+            else if (href === '/rehearsal') textKey = 'nav_rehearsal';
             else if (href === '/healthcheck') textKey = 'nav_healthcheck';
             else if (href === '/users') textKey = 'nav_users';
             else if (href === '/tokens') textKey = 'nav_tokens';
@@ -275,7 +277,7 @@
         topbar.className = 'page-topbar';
         const now = new Date();
         const dateLabel = now.toLocaleDateString(state.currentLanguage || 'en', { weekday: 'short', month: 'short', day: 'numeric' });
-        topbar.innerHTML = '<div class="crumbs"><span class="crumb-chip">' + getTranslation('header_control_panel') + '</span><span class="crumb-sep">/</span><span class="crumb-current">' + escapeHTML(getTranslation(activeLink.getAttribute('href') === '/dashboard' ? 'nav_dashboard' : activeLink.getAttribute('href') === '/sites' ? 'nav_sites' : activeLink.getAttribute('href') === '/backups' ? 'nav_backups' : activeLink.getAttribute('href') === '/restore' ? 'nav_restore' : activeLink.getAttribute('href') === '/upgrade' ? 'nav_upgrade' : activeLink.getAttribute('href') === '/snapshots' ? 'nav_snapshots' : activeLink.getAttribute('href') === '/healthcheck' ? 'nav_healthcheck' : activeLink.getAttribute('href') === '/users' ? 'nav_users' : activeLink.getAttribute('href') === '/tokens' ? 'nav_tokens' : activeLink.getAttribute('href') === '/system' ? 'nav_system' : activeLink.getAttribute('href') === '/api/docs' ? 'nav_docs' : 'nav_dashboard')) + '</span></div><div class="topbar-meta"><span class="meta-pill">' + getTranslation('header_live_api') + '</span><span class="meta-pill">' + escapeHTML(dateLabel) + '</span></div>';
+            topbar.innerHTML = '<div class="crumbs"><span class="crumb-chip">' + getTranslation('header_control_panel') + '</span><span class="crumb-sep">/</span><span class="crumb-current">' + escapeHTML(getTranslation(activeLink.getAttribute('href') === '/dashboard' ? 'nav_dashboard' : activeLink.getAttribute('href') === '/sites' ? 'nav_sites' : activeLink.getAttribute('href') === '/backups' ? 'nav_backups' : activeLink.getAttribute('href') === '/restore' ? 'nav_restore' : activeLink.getAttribute('href') === '/upgrade' ? 'nav_upgrade' : activeLink.getAttribute('href') === '/rehearsal' ? 'nav_rehearsal' : activeLink.getAttribute('href') === '/snapshots' ? 'nav_snapshots' : activeLink.getAttribute('href') === '/healthcheck' ? 'nav_healthcheck' : activeLink.getAttribute('href') === '/users' ? 'nav_users' : activeLink.getAttribute('href') === '/tokens' ? 'nav_tokens' : activeLink.getAttribute('href') === '/system' ? 'nav_system' : activeLink.getAttribute('href') === '/api/docs' ? 'nav_docs' : 'nav_dashboard')) + '</span></div><div class="topbar-meta"><span class="meta-pill">' + getTranslation('header_live_api') + '</span><span class="meta-pill">' + escapeHTML(dateLabel) + '</span></div>';
         main.prepend(topbar);
     }
 
@@ -388,7 +390,7 @@
         return navigator.clipboard.writeText(value);
     }
 
-    async function loadSitesForSelector(selectId) {
+    async function loadSitesForSelector(selectId, onLoaded) {
         const select = document.getElementById(selectId);
         if (!select) return;
         const resp = await fetch('/api/v1/sites', {
@@ -401,6 +403,7 @@
                 select.innerHTML += `<option value="${App.escapeHTML(s.id)}">${App.escapeHTML(s.name || '-')}</option>`;
             });
         }
+        if (onLoaded) onLoaded();
     }
 
     function toProgressPercent(job) {
@@ -415,6 +418,7 @@
     }
 
     function jobTypeLabel(job) {
+        if (job && job.type === 'rehearsal') return App.t('job_type_rehearsal') || 'Rehearsal';
         return App.t('job_type_' + (job && job.type ? job.type : 'backup'));
     }
 
@@ -437,23 +441,54 @@
             <div class="job-actions" style="margin-top:8px">${isActive ? `<button data-action="cancelJob" data-id="${escapeHTML(job.id)}" class="btn btn-danger btn-sm">${App.t('btn_stop')}</button>` : ''}</div>`;
     }
 
-    async function loadLatestJob() {
+    async function loadLatestJob(jobType, onCompleted) {
         const siteId = document.getElementById('siteSelector').value;
         const el = document.getElementById('jobStatus');
         state.currentSiteId = siteId || '';
-        if (!siteId) { el.style.display = 'none'; return; }
-        const r = await fetch('/api/v1/jobs?site_id=' + siteId, {
+
+        if (siteId) {
+            let url = '/api/v1/jobs?site_id=' + siteId;
+            if (jobType) url += '&type=' + jobType;
+            const r = await fetch(url, {
+                headers: { 'Authorization': 'Bearer ' + getToken() }
+            });
+            const j = await r.json();
+            if (j.success && j.data) {
+                if (j.data.status === 'completed' || j.data.status === 'failed' || j.data.status === 'cancelled') {
+                    el.style.display = 'none';
+                    if (j.data.status === 'completed' && onCompleted) onCompleted(j.data.id);
+                } else {
+                    renderJobStatus(el, j.data);
+                    pollJob(j.data.id, el, onCompleted);
+                }
+                return;
+            }
+            el.style.display = 'none';
+            return;
+        }
+
+        if (!jobType) { el.style.display = 'none'; return; }
+
+        let url = '/api/v1/jobs?type=' + jobType;
+        const r = await fetch(url, {
             headers: { 'Authorization': 'Bearer ' + getToken() }
         });
         const j = await r.json();
         if (j.success && j.data) {
-            renderJobStatus(el, j.data);
-            if (j.data.status !== 'completed' && j.data.status !== 'failed' && j.data.status !== 'cancelled') {
-                pollJob(j.data.id, el);
+            const job = j.data;
+            if (job.status === 'running' || job.status === 'queued') {
+                const sel = document.getElementById('siteSelector');
+                for (let i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].value === job.site_id) {
+                        sel.value = job.site_id;
+                        sel.dispatchEvent(new Event('change'));
+                        break;
+                    }
+                }
+                return;
             }
-        } else {
-            el.style.display = 'none';
         }
+        el.style.display = 'none';
     }
 
     async function pollJob(jobId, el, onDone) {
@@ -464,10 +499,9 @@
             const j = await r.json();
             if (j.success && j.data) {
                 renderJobStatus(el, j.data);
-                if (j.data.status === 'completed') {
-                    if (onDone) onDone();
-                    return;
-                } else if (j.data.status === 'failed' || j.data.status === 'cancelled') {
+                    if (j.data.status === 'completed' || j.data.status === 'failed' || j.data.status === 'cancelled') {
+                        setTimeout(() => { el.style.display = 'none'; }, 10000);
+                        if (j.data.status === 'completed' && onDone) onDone(jobId);
                     return;
                 }
                 setTimeout(poll, 2000);
@@ -476,11 +510,13 @@
         setTimeout(poll, 1000);
     }
 
-    async function loadJobHistory() {
+    async function loadJobHistory(jobType) {
         const siteId = document.getElementById('siteSelector').value;
         const tbody = document.getElementById('jobHistoryBody');
         if (!siteId) { tbody.innerHTML = ''; return; }
-        const r = await fetch('/api/v1/jobs?site_id=' + siteId + '&all=1', {
+        let url = '/api/v1/jobs?site_id=' + siteId + '&all=1';
+        if (jobType) url += '&type=' + jobType;
+        const r = await fetch(url, {
             headers: { 'Authorization': 'Bearer ' + getToken() }
         });
         const j = await r.json();

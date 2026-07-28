@@ -47,16 +47,15 @@ func Run() {
 		port = "8081"
 	}
 
+	connStr := buildDBConnStr()
+	database, err := db.New(connStr)
+	if err != nil {
+		log.Fatalf("Failed to create database: %v", err)
+	}
+
 	dataDir := os.Getenv("DATA_DIR")
 	if dataDir == "" {
 		dataDir = "./data"
-	}
-
-	dbPath := dataDir + "/wp-maintenance.db"
-
-	database, err := db.New(dbPath)
-	if err != nil {
-		log.Fatalf("Failed to create database: %v", err)
 	}
 
 	secretKey := os.Getenv("SECRET_KEY")
@@ -64,10 +63,7 @@ func Run() {
 		secretKey = "default-secret-key"
 	}
 
-	authMgr, err := auth.NewAuthManager(dbPath, secretKey)
-	if err != nil {
-		log.Fatalf("Failed to create auth manager: %v", err)
-	}
+	authMgr := auth.NewAuthManager(database, secretKey)
 
 	checker := healthcheck.NewChecker()
 
@@ -115,7 +111,7 @@ func Run() {
 		Database:       database,
 		Checker:        checker,
 		Restic:         resticClient,
-		StagingManager: staging.NewManager("."),
+		StagingManager: staging.NewManager("./staging"),
 		jobQueue:       make(chan *jobTuple, jobQueueSize),
 	}
 
@@ -152,6 +148,9 @@ func Run() {
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleHealthcheck))
 
 	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleStagingCleanup))
+
+	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleRehearsal))
+	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleRehearsalByID))
 
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleJobByID))
@@ -216,4 +215,29 @@ func generateSelfSignedCert() (*tls.Certificate, error) {
 	}
 
 	return &cert, nil
+}
+
+func buildDBConnStr() string {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if user == "" {
+		user = "wpmaint"
+	}
+	if password == "" {
+		password = "wpmaint"
+	}
+	if dbname == "" {
+		dbname = "wpmaintenance"
+	}
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname)
 }

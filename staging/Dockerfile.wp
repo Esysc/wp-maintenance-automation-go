@@ -36,7 +36,7 @@ RUN mkdir -p /etc/apache2/ssl \
     -subj "/CN=localhost/O=Staging/C=CH" \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
-COPY staging/apache-default-ssl.conf /etc/apache2/sites-available/default-ssl.conf
+COPY apache-default-ssl.conf /etc/apache2/sites-available/default-ssl.conf
 RUN a2ensite default-ssl
 
 RUN curl -fS -o /usr/local/bin/wp-cli https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \
@@ -55,8 +55,8 @@ RUN mkdir -p /root/.ssh /run/sshd /etc/ssh/sshd_config.d \
 RUN sed -i 's/#PermitRootLogin prohibit-password/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config \
  && sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
 
-COPY staging/wp-entrypoint.sh /usr/local/bin/wp-entrypoint.sh
-COPY staging/wp-config-gen.sh /usr/local/bin/wp-config-gen.sh
+COPY wp-entrypoint.sh /usr/local/bin/wp-entrypoint.sh
+COPY wp-config-gen.sh /usr/local/bin/wp-config-gen.sh
 RUN chmod +x /usr/local/bin/wp-entrypoint.sh /usr/local/bin/wp-config-gen.sh
 
 ENTRYPOINT ["wp-entrypoint.sh"]

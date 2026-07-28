@@ -2,6 +2,8 @@ package staging
 
 import (
 	"fmt"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +39,15 @@ type StagingEnv struct {
 
 func NewManager(buildContext string) *Manager {
 	return &Manager{buildContext: buildContext}
+}
+
+func NewEnv(composeFile, projectName, restoreDir, healthURL string) *StagingEnv {
+	return &StagingEnv{
+		ComposeFile: composeFile,
+		ProjectName: projectName,
+		RestoreDir:  restoreDir,
+		HealthURL:   healthURL,
+	}
 }
 
 func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEnv, error) {
@@ -109,14 +120,14 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 		return nil, fmt.Errorf("table prefix detection failed: %w", err)
 	}
 
-	if err := env.updateSiteURL(); err != nil {
-		env.cleanup()
-		return nil, fmt.Errorf("site URL update failed: %w", err)
-	}
-
 	if err := env.resolvePorts(); err != nil {
 		env.cleanup()
 		return nil, fmt.Errorf("port resolution failed: %w", err)
+	}
+
+	if err := env.updateSiteURL(); err != nil {
+		env.cleanup()
+		return nil, fmt.Errorf("site URL update failed: %w", err)
 	}
 
 	env.HealthURL = fmt.Sprintf("https://localhost:%s", env.HTTPSPort)
@@ -187,8 +198,9 @@ func (env *StagingEnv) waitForDB() error {
 			"-f", env.ComposeFile,
 			"-p", env.ProjectName,
 			"exec", "-T", "db",
-			"mysqladmin", "ping", "-h", "localhost",
+			"mysql", "-h", "127.0.0.1",
 			"-u", "root", "-prootpass",
+			"-e", "SELECT 1",
 		)
 		cmd.Env = os.Environ()
 		if err := cmd.Run(); err == nil {
@@ -208,7 +220,8 @@ func (env *StagingEnv) createUser() error {
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
 		"exec", "-T", "db",
-		"mysql", "-u", "root", "-prootpass",
+		"mysql", "-h", "127.0.0.1",
+		"-u", "root", "-prootpass",
 		"-e", createSQL,
 	)
 	cmd.Env = os.Environ()
@@ -220,8 +233,12 @@ func (env *StagingEnv) createUser() error {
 }
 
 func (env *StagingEnv) importDB() error {
-	dumpFiles, _ := filepath.Glob(filepath.Join(env.RestoreDir, "backup_artifacts", "*", "db", "*.sql"))
-	gzFiles, _ := filepath.Glob(filepath.Join(env.RestoreDir, "backup_artifacts", "*", "db", "*.sql.gz"))
+	dbDir := findDir(env.RestoreDir, "db")
+	var dumpFiles, gzFiles []string
+	if dbDir != "" {
+		dumpFiles, _ = filepath.Glob(filepath.Join(dbDir, "*.sql"))
+		gzFiles, _ = filepath.Glob(filepath.Join(dbDir, "*.sql.gz"))
+	}
 
 	var dumpFile string
 	if len(gzFiles) > 0 {
@@ -234,18 +251,21 @@ func (env *StagingEnv) importDB() error {
 		return nil
 	}
 
+	mysqlArgs := []string{
+		"compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "db",
+		"mysql", "-h", "127.0.0.1",
+		"--max-allowed-packet=1G",
+		"-u", "root", "-prootpass", env.DBName,
+	}
+
 	if strings.HasSuffix(dumpFile, ".gz") {
 		gunzip := exec.Command("gunzip", "-c", dumpFile)
-		mysql := exec.Command("docker", "compose",
-			"-f", env.ComposeFile,
-			"-p", env.ProjectName,
-			"exec", "-T", "db",
-			"mysql", "--max-allowed-packet=1G",
-			"-u", "root", "-prootpass", env.DBName,
-		)
+		mysql := exec.Command("docker", mysqlArgs...)
 		mysql.Env = os.Environ()
 		mysql.Stdin, _ = gunzip.StdoutPipe()
-		gunzip.Stdout = nil
 
 		if err := gunzip.Start(); err != nil {
 			return fmt.Errorf("gunzip start failed: %w", err)
@@ -262,16 +282,9 @@ func (env *StagingEnv) importDB() error {
 	}
 
 	cat := exec.Command("cat", dumpFile)
-	mysql := exec.Command("docker", "compose",
-		"-f", env.ComposeFile,
-		"-p", env.ProjectName,
-		"exec", "-T", "db",
-		"mysql", "--max-allowed-packet=1G",
-		"-u", "root", "-prootpass", env.DBName,
-	)
+	mysql := exec.Command("docker", mysqlArgs...)
 	mysql.Env = os.Environ()
 	mysql.Stdin, _ = cat.StdoutPipe()
-	cat.Stdout = nil
 
 	if err := cat.Start(); err != nil {
 		return fmt.Errorf("cat start failed: %w", err)
@@ -288,11 +301,10 @@ func (env *StagingEnv) importDB() error {
 }
 
 func (env *StagingEnv) copyFiles() error {
-	wpDirs, _ := filepath.Glob(filepath.Join(env.RestoreDir, "backup_artifacts", "*", "wp"))
-	if len(wpDirs) == 0 {
+	wpDir := findDir(env.RestoreDir, "wp")
+	if wpDir == "" {
 		return nil
 	}
-	wpDir := wpDirs[0]
 
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -336,13 +348,13 @@ func (env *StagingEnv) patchWPConfig() error {
 }
 
 func (env *StagingEnv) readTablePrefix() error {
-	wpDirs, _ := filepath.Glob(filepath.Join(env.RestoreDir, "backup_artifacts", "*", "wp"))
-	if len(wpDirs) == 0 {
+	wpDir := findDir(env.RestoreDir, "wp")
+	if wpDir == "" {
 		env.TablePrefix = "wp_"
 		return nil
 	}
 
-	wpConfig := filepath.Join(wpDirs[0], "wp-config.php")
+	wpConfig := filepath.Join(wpDir, "wp-config.php")
 	data, err := os.ReadFile(wpConfig)
 	if err != nil {
 		env.TablePrefix = "wp_"
@@ -362,19 +374,27 @@ func (env *StagingEnv) readTablePrefix() error {
 
 func (env *StagingEnv) updateSiteURL() error {
 	prefixSQL := strings.ReplaceAll(env.TablePrefix, "`", "")
+
+	oldURL, _ := env.getSiteURL()
+
+	newURL := fmt.Sprintf("https://localhost:%s", env.HTTPSPort)
+
 	updateSQL := fmt.Sprintf(
-		"UPDATE `%s`.`%soptions` SET option_value='https://localhost:%s' WHERE option_name IN ('siteurl','home')",
-		env.DBName, prefixSQL, env.HTTPSPort,
+		"UPDATE `%s`.`%soptions` SET option_value='%s' WHERE option_name IN ('siteurl','home')",
+		env.DBName, prefixSQL, newURL,
 	)
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
 		"exec", "-T", "db",
-		"mysql", "-u", "root", "-prootpass",
+		"mysql", "-h", "127.0.0.1",
+		"-u", "root", "-prootpass",
 		"-e", updateSQL,
 	)
 	cmd.Env = os.Environ()
-	cmd.Run()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		log.Printf("staging: SQL siteurl update failed: %v\nOutput: %s", err, string(out))
+	}
 
 	flushCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -382,37 +402,83 @@ func (env *StagingEnv) updateSiteURL() error {
 		"exec", "-T", "wp", "wp", "cache", "flush", "--allow-root",
 	)
 	flushCmd.Env = os.Environ()
-	flushCmd.Run()
+	if out, err := flushCmd.CombinedOutput(); err != nil {
+		log.Printf("staging: wp cache flush failed: %v\nOutput: %s", err, string(out))
+	}
+
+	if oldURL != "" && oldURL != newURL {
+		wpCLICmd := exec.Command("docker", "compose",
+			"-f", env.ComposeFile,
+			"-p", env.ProjectName,
+			"exec", "-T", "wp", "wp", "search-replace",
+			"--all-tables", "--allow-root",
+			"--precise",
+			"--skip-columns=guid",
+			oldURL, newURL,
+		)
+		wpCLICmd.Env = os.Environ()
+		if out, err := wpCLICmd.CombinedOutput(); err != nil {
+			log.Printf("staging: wp search-relace from '%s' to '%s' failed: %v\nOutput: %s", oldURL, newURL, err, string(out))
+		}
+	}
 
 	return nil
 }
 
-func (env *StagingEnv) resolvePorts() error {
+func (env *StagingEnv) getSiteURL() (string, error) {
+	prefixSQL := strings.ReplaceAll(env.TablePrefix, "`", "")
+	selectSQL := fmt.Sprintf(
+		"SELECT option_value FROM `%s`.`%soptions` WHERE option_name='siteurl' LIMIT 1",
+		env.DBName, prefixSQL,
+	)
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
-		"port", "wp", "443",
+		"exec", "-T", "db",
+		"mysql", "-h", "127.0.0.1",
+		"-u", "root", "-prootpass",
+		"-sN", "-e", selectSQL,
 	)
 	cmd.Env = os.Environ()
 	out, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("failed to get HTTPS port: %w", err)
+		return "", err
 	}
-	env.HTTPSPort = strings.TrimSpace(string(out))
+	return strings.TrimSpace(string(out)), nil
+}
 
-	cmd = exec.Command("docker", "compose",
-		"-f", env.ComposeFile,
-		"-p", env.ProjectName,
-		"port", "wp", "80",
-	)
-	cmd.Env = os.Environ()
-	out, err = cmd.Output()
-	if err != nil {
-		return fmt.Errorf("failed to get HTTP port: %w", err)
+func (env *StagingEnv) resolvePorts() error {
+	httpsPort := env.getContainerPort("443")
+	if httpsPort == "" {
+		return fmt.Errorf("failed to resolve HTTPS port")
 	}
-	env.WPSPort = strings.TrimSpace(string(out))
+	env.HTTPSPort = httpsPort
+
+	httpPort := env.getContainerPort("80")
+	if httpPort == "" {
+		return fmt.Errorf("failed to resolve HTTP port")
+	}
+	env.WPSPort = httpPort
 
 	return nil
+}
+
+func (env *StagingEnv) getContainerPort(containerPort string) string {
+	cmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"port", "wp", containerPort,
+	)
+	cmd.Env = os.Environ()
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	portStr := strings.TrimSpace(string(out))
+	if idx := strings.LastIndex(portStr, ":"); idx >= 0 {
+		return portStr[idx+1:]
+	}
+	return portStr
 }
 
 func (env *StagingEnv) cleanup() error {
@@ -438,15 +504,38 @@ func (env *StagingEnv) cleanup() error {
 	return nil
 }
 
+func findDir(root, target string) string {
+	var found string
+	filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || found != "" {
+			return filepath.SkipAll
+		}
+		if d.IsDir() && d.Name() == target && path != root {
+			found = path
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+func findFile(root, pattern string) string {
+	matches, _ := filepath.Glob(filepath.Join(root, pattern))
+	if len(matches) > 0 {
+		return matches[0]
+	}
+	return ""
+}
+
 var wpVersionRe = regexp.MustCompile(`wp_version\s*=\s*'([^']+)'`)
-var dbNameRe = regexp.MustCompile(`define.*'DB_NAME'.*'([^']+)'`)
-var dbUserRe = regexp.MustCompile(`define.*'DB_USER'.*'([^']+)'`)
-var dbPassRe = regexp.MustCompile(`define.*'DB_PASSWORD'.*'([^']+)'`)
+var dbNameRe = regexp.MustCompile(`define\s*\(\s*'DB_NAME'\s*,\s*'([^']+)'`)
+var dbUserRe = regexp.MustCompile(`define\s*\(\s*'DB_USER'\s*,\s*'([^']+)'`)
+var dbPassRe = regexp.MustCompile(`define\s*\(\s*'DB_PASSWORD'\s*,\s*'([^']+)'`)
 
 func (env *StagingEnv) detectVersions(restoreDir string) error {
-	wpDirs, _ := filepath.Glob(filepath.Join(restoreDir, "backup_artifacts", "*", "wp"))
-	if len(wpDirs) > 0 {
-		versionFile := filepath.Join(wpDirs[0], "wp-includes", "version.php")
+	wpDir := findDir(restoreDir, "wp")
+	if wpDir != "" {
+		versionFile := filepath.Join(wpDir, "wp-includes", "version.php")
 		data, err := os.ReadFile(versionFile)
 		if err == nil {
 			matches := wpVersionRe.FindSubmatch(data)
@@ -465,27 +554,26 @@ func (env *StagingEnv) detectVersions(restoreDir string) error {
 	env.DBImage = "mariadb"
 	env.DBTag = "10.11"
 
-	manifestFiles, _ := filepath.Glob(filepath.Join(restoreDir, "backup_artifacts", "*", "manifest.txt"))
-	for _, mf := range manifestFiles {
-		data, err := os.ReadFile(mf)
-		if err != nil {
-			continue
-		}
-		content := string(data)
-		for _, line := range strings.Split(content, "\n") {
-			if strings.HasPrefix(line, "db_version=") {
-				dbVer := strings.TrimPrefix(line, "db_version=")
-				if strings.Contains(strings.ToLower(dbVer), "maria") {
-					env.DBImage = "mariadb"
-					parts := strings.SplitN(dbVer, ".", 3)
-					if len(parts) >= 2 {
-						env.DBTag = parts[0] + "." + parts[1]
-					}
-				} else {
-					env.DBImage = "mysql"
-					parts := strings.SplitN(dbVer, ".", 3)
-					if len(parts) >= 2 {
-						env.DBTag = parts[0] + "." + parts[1]
+	manifestFile := findFile(restoreDir, "manifest.txt")
+	if manifestFile != "" {
+		data, err := os.ReadFile(manifestFile)
+		if err == nil {
+			content := string(data)
+			for _, line := range strings.Split(content, "\n") {
+				if strings.HasPrefix(line, "db_version=") {
+					dbVer := strings.TrimPrefix(line, "db_version=")
+					if strings.Contains(strings.ToLower(dbVer), "maria") {
+						env.DBImage = "mariadb"
+						parts := strings.SplitN(dbVer, ".", 3)
+						if len(parts) >= 2 {
+							env.DBTag = parts[0] + "." + parts[1]
+						}
+					} else {
+						env.DBImage = "mysql"
+						parts := strings.SplitN(dbVer, ".", 3)
+						if len(parts) >= 2 {
+							env.DBTag = parts[0] + "." + parts[1]
+						}
 					}
 				}
 			}
@@ -496,15 +584,15 @@ func (env *StagingEnv) detectVersions(restoreDir string) error {
 }
 
 func (env *StagingEnv) detectDBCredentials(restoreDir string) error {
-	wpDirs, _ := filepath.Glob(filepath.Join(restoreDir, "backup_artifacts", "*", "wp"))
-	if len(wpDirs) == 0 {
+	wpDir := findDir(restoreDir, "wp")
+	if wpDir == "" {
 		env.DBName = "wordpress"
 		env.DBUser = "wpuser"
 		env.DBPassword = "wppass"
 		return nil
 	}
 
-	wpConfig := filepath.Join(wpDirs[0], "wp-config.php")
+	wpConfig := filepath.Join(wpDir, "wp-config.php")
 	data, err := os.ReadFile(wpConfig)
 	if err != nil {
 		env.DBName = "wordpress"
@@ -537,7 +625,11 @@ func (env *StagingEnv) detectDBCredentials(restoreDir string) error {
 }
 
 func (env *StagingEnv) generateComposeFile(buildContext string) (string, error) {
-	template, err := os.ReadFile(filepath.Join(buildContext, "staging", "docker-compose.template.yml"))
+	absContext, err := filepath.Abs(buildContext)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve build context path: %w", err)
+	}
+	template, err := os.ReadFile(filepath.Join(absContext, "docker-compose.template.yml"))
 	if err != nil {
 		return "", fmt.Errorf("failed to read compose template: %w", err)
 	}
@@ -548,7 +640,7 @@ func (env *StagingEnv) generateComposeFile(buildContext string) (string, error) 
 	}
 
 	content := string(template)
-	content = strings.ReplaceAll(content, "${BUILD_CONTEXT:-.}", buildContext)
+	content = strings.ReplaceAll(content, "${BUILD_CONTEXT:-.}", absContext)
 
 	if _, err := composeFile.WriteString(content); err != nil {
 		composeFile.Close()

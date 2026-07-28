@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 )
 
 type CLIClient struct {
@@ -521,6 +521,31 @@ func cmdConfig(client *CLIClient, args []string) {
 	printJSON(result)
 }
 
+func buildDBConnStr() string {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if user == "" {
+		user = "wpmaint"
+	}
+	if password == "" {
+		password = "wpmaint"
+	}
+	if dbname == "" {
+		dbname = "wpmaintenance"
+	}
+	return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname)
+}
+
 func printJSON(data interface{}) {
 	b, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
@@ -549,26 +574,23 @@ func cmdResetPassword(client *CLIClient, args []string) {
 		os.Exit(1)
 	}
 
-	dataDir := os.Getenv("DATA_DIR")
-	if dataDir == "" {
-		dataDir = "./data"
+	connStr := buildDBConnStr()
+	database, err := db.New(connStr)
+	if err != nil {
+		fmt.Printf("Error: failed to connect to database: %v\n", err)
+		os.Exit(1)
 	}
-	dbPath := filepath.Join(dataDir, "wp-maintenance.db")
 
 	secretKey := os.Getenv("SECRET_KEY")
 	if secretKey == "" {
 		secretKey = "default-secret-key"
 	}
 
-	authMgr, err := auth.NewAuthManager(dbPath, secretKey)
-	if err != nil {
-		fmt.Printf("Error: failed to initialize auth manager for %s: %v\n", dbPath, err)
-		os.Exit(1)
-	}
+	authMgr := auth.NewAuthManager(database, secretKey)
 
 	admin, err := authMgr.GetAdminUser()
 	if err != nil {
-		fmt.Printf("Error: failed to find internal admin user in %s: %v\n", dbPath, err)
+		fmt.Printf("Error: failed to find internal admin user: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -577,5 +599,5 @@ func cmdResetPassword(client *CLIClient, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Password reset successful for user '%s' using local database '%s'.\n", admin.Username, dbPath)
+	fmt.Printf("Password reset successful for user '%s'.\n", admin.Username)
 }

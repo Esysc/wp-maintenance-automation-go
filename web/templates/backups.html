@@ -17,6 +17,7 @@
             <li><a href="/backups" class="{{if eq .ActivePage "backups"}}active{{end}}" data-i18n="nav_backups">Backups</a></li>
             <li><a href="/restore" class="{{if eq .ActivePage "restore"}}active{{end}}" data-i18n="nav_restore">Restore</a></li>
             <li><a href="/upgrade" class="{{if eq .ActivePage "upgrade"}}active{{end}}" data-i18n="nav_upgrade">Upgrade</a></li>
+            <li><a href="/rehearsal" class="{{if eq .ActivePage "rehearsal"}}active{{end}}" data-i18n="nav_rehearsal">Rehearsal</a></li>
             <li><a href="/snapshots" class="{{if eq .ActivePage "snapshots"}}active{{end}}" data-i18n="nav_snapshots">Snapshots</a></li>
             <li><a href="/healthcheck" class="{{if eq .ActivePage "healthcheck"}}active{{end}}" data-i18n="nav_healthcheck">Health Checks</a></li>
             <li><a href="/users" class="{{if eq .ActivePage "users"}}active{{end}}" data-i18n="nav_users">Users</a></li>
@@ -32,13 +33,13 @@
         <header class="page-header">
             <h1 data-i18n="page_title_backups">Backups</h1>
             <div class="header-actions">
-                <select id="siteSelector" onchange="loadBackups();App.loadLatestJob();App.loadJobHistory()" class="site-selector">
+                <select id="siteSelector" onchange="onSiteChange()" class="site-selector">
                     <option value="" disabled selected data-i18n="label_select_site">Select Site</option>
                 </select>
                 <button class="btn btn-primary" onclick="runBackup()" data-i18n="btn_run_backup_now">Run Backup Now</button>
             </div>
         </header>
-        <div class="card">
+        <div class="card" id="backupsCard" style="display:none;">
             <table id="backupsTable">
                 <thead>
                     <tr>
@@ -56,7 +57,7 @@
         <div id="backupResult" style="display:none;" class="result-box"></div>
         <div id="jobStatus" style="display:none;" class="result-box"></div>
 
-        <div class="card" style="margin-top:20px;">
+        <div class="card" style="margin-top:20px;display:none;" id="jobHistoryCard">
             <h2 data-i18n="job_history_title">Job History</h2>
             <table id="jobHistoryTable">
                 <thead>
@@ -164,10 +165,18 @@
         loadBackups();
     }
 
-    App.loadSitesForSelector('siteSelector');
-    App.loadLatestJob();
-    loadBackups();
-    App.loadJobHistory();
+    function onSiteChange() {
+        const siteId = document.getElementById('siteSelector').value;
+        const show = siteId ? 'block' : 'none';
+        document.getElementById('backupsCard').style.display = show;
+        document.getElementById('jobHistoryCard').style.display = show;
+        if (siteId) {
+            loadBackups();
+            App.loadLatestJob('backup');
+            App.loadJobHistory('backup');
+        }
+    }
+    App.loadSitesForSelector('siteSelector', () => App.loadLatestJob('backup'));
     </script>
 </body>
 </html>

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 )
 
 func setupTestAuth(t *testing.T) *AuthManager {
@@ -15,13 +17,14 @@ func setupTestAuth(t *testing.T) *AuthManager {
 	}
 
 	dbPath := filepath.Join(dir, "test.db")
-	am, err := NewAuthManager(dbPath, "test-secret-key")
+	database, err := db.New(dbPath)
 	if err != nil {
-		t.Fatalf("failed to create auth manager: %v", err)
+		t.Fatalf("failed to create database: %v", err)
 	}
+	am := NewAuthManager(database, "test-secret-key")
 
 	t.Cleanup(func() {
-		am.db.Close()
+		database.Close()
 		os.RemoveAll(dir)
 	})
 	return am

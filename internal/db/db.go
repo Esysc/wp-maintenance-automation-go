@@ -3,22 +3,17 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
+	"strings"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/lib/pq"
 )
 
 type Database struct {
 	*sql.DB
 }
 
-func New(dbPath string) (*Database, error) {
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
-		return nil, fmt.Errorf("failed to create data dir: %w", err)
-	}
-
-	db, err := sql.Open("sqlite", dbPath)
+func New(connStr string) (*Database, error) {
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -47,8 +42,37 @@ func New(dbPath string) (*Database, error) {
 	if err := database.migrateJobsProgressPercent(); err != nil {
 		return nil, fmt.Errorf("failed to migrate jobs progress percent: %w", err)
 	}
+	if err := database.migrateBackupsSnapshotID(); err != nil {
+		return nil, fmt.Errorf("failed to migrate backups snapshot_id: %w", err)
+	}
 
 	return database, nil
+}
+
+func pgPlaceholders(query string) string {
+	var buf strings.Builder
+	n := 0
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			n++
+			buf.WriteString(fmt.Sprintf("$%d", n))
+		} else {
+			buf.WriteByte(query[i])
+		}
+	}
+	return buf.String()
+}
+
+func (db *Database) Exec(query string, args ...interface{}) (sql.Result, error) {
+	return db.DB.Exec(pgPlaceholders(query), args...)
+}
+
+func (db *Database) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	return db.DB.Query(pgPlaceholders(query), args...)
+}
+
+func (db *Database) QueryRow(query string, args ...interface{}) *sql.Row {
+	return db.DB.QueryRow(pgPlaceholders(query), args...)
 }
 
 func initSchema(db *sql.DB) error {
@@ -61,8 +85,8 @@ func initSchema(db *sql.DB) error {
 		password_hash TEXT NOT NULL,
 		role TEXT NOT NULL,
 		force_pass INTEGER NOT NULL DEFAULT 1,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS api_tokens (
@@ -70,9 +94,9 @@ func initSchema(db *sql.DB) error {
 		user_id TEXT NOT NULL,
 		token TEXT UNIQUE NOT NULL,
 		name TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		expires_at DATETIME,
-		last_used DATETIME,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		expires_at TIMESTAMP,
+		last_used TIMESTAMP,
 		revoked INTEGER NOT NULL DEFAULT 0,
 		FOREIGN KEY(user_id) REFERENCES users(id)
 	);
@@ -95,8 +119,8 @@ func initSchema(db *sql.DB) error {
 		retention_flags TEXT,
 		healthcheck_url TEXT,
 		staging_enabled INTEGER DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE TABLE IF NOT EXISTS backups (
@@ -118,7 +142,7 @@ func initSchema(db *sql.DB) error {
 		ssh_port INTEGER,
 		backup_size INTEGER DEFAULT 0,
 		checksum TEXT,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY(site_id) REFERENCES sites(id)
 	);
 
@@ -134,8 +158,8 @@ func initSchema(db *sql.DB) error {
 		progress_percent INTEGER NOT NULL DEFAULT 0,
 		result TEXT NOT NULL DEFAULT '',
 		error TEXT NOT NULL DEFAULT '',
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
 	CREATE INDEX IF NOT EXISTS idx_jobs_site_id ON jobs(site_id);
@@ -146,56 +170,39 @@ func initSchema(db *sql.DB) error {
 	return err
 }
 
-func (db *Database) migrateUserProfileFields() error {
-	rows, err := db.Query("PRAGMA table_info(users)")
+func (db *Database) hasColumn(table, column string) (bool, error) {
+	query := `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`
+	rows, err := db.DB.Query(query, table, column)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
+	return rows.Next(), nil
+}
 
-	hasDisplayName := false
-	hasIcon := false
-
-	for rows.Next() {
-		var cid int
-		var name string
-		var columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+func (db *Database) migrateUserProfileFields() error {
+	for _, m := range []struct {
+		col string
+		def string
+	}{
+		{"display_name", "TEXT NOT NULL DEFAULT ''"},
+		{"icon", "TEXT NOT NULL DEFAULT 'user'"},
+	} {
+		ok, err := db.hasColumn("users", m.col)
+		if err != nil {
 			return err
 		}
-
-		switch name {
-		case "display_name":
-			hasDisplayName = true
-		case "icon":
-			hasIcon = true
+		if !ok {
+			if _, err := db.DB.Exec("ALTER TABLE users ADD COLUMN " + m.col + " " + m.def); err != nil {
+				return err
+			}
 		}
 	}
 
-	if err := rows.Err(); err != nil {
+	if _, err := db.DB.Exec("UPDATE users SET display_name = username WHERE COALESCE(display_name, '') = ''"); err != nil {
 		return err
 	}
-
-	if !hasDisplayName {
-		if _, err := db.Exec("ALTER TABLE users ADD COLUMN display_name TEXT NOT NULL DEFAULT ''"); err != nil {
-			return err
-		}
-	}
-
-	if !hasIcon {
-		if _, err := db.Exec("ALTER TABLE users ADD COLUMN icon TEXT NOT NULL DEFAULT 'user'"); err != nil {
-			return err
-		}
-	}
-
-	if _, err := db.Exec("UPDATE users SET display_name = username WHERE COALESCE(display_name, '') = ''"); err != nil {
-		return err
-	}
-
-	if _, err := db.Exec("UPDATE users SET icon = 'user' WHERE COALESCE(icon, '') = ''"); err != nil {
+	if _, err := db.DB.Exec("UPDATE users SET icon = 'user' WHERE COALESCE(icon, '') = ''"); err != nil {
 		return err
 	}
 
@@ -203,40 +210,18 @@ func (db *Database) migrateUserProfileFields() error {
 }
 
 func (db *Database) migrateSiteSSHKey() error {
-	rows, err := db.Query("PRAGMA table_info(sites)")
+	ok, err := db.hasColumn("sites", "wp_ssh_key")
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	hasKey := false
-	for rows.Next() {
-		var cid int
-		var name string
-		var columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return err
-		}
-		if name == "wp_ssh_key" {
-			hasKey = true
-			break
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-
-	if !hasKey {
-		_, err = db.Exec("ALTER TABLE sites ADD COLUMN wp_ssh_key TEXT")
+	if !ok {
+		_, err = db.DB.Exec("ALTER TABLE sites ADD COLUMN wp_ssh_key TEXT")
 	}
 	return err
 }
 
 func (db *Database) migrateDropStagingHostFields() error {
-	rows, err := db.Query("PRAGMA table_info(sites)")
+	rows, err := db.DB.Query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'sites'`)
 	if err != nil {
 		return err
 	}
@@ -244,24 +229,16 @@ func (db *Database) migrateDropStagingHostFields() error {
 
 	columns := make(map[string]bool)
 	for rows.Next() {
-		var cid int
 		var name string
-		var columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+		if err := rows.Scan(&name); err != nil {
 			return err
 		}
 		columns[name] = true
 	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
 
 	for _, col := range []string{"staging_host", "staging_port", "staging_user", "staging_root"} {
 		if columns[col] {
-			if _, err := db.Exec("ALTER TABLE sites DROP COLUMN " + col); err != nil {
+			if _, err := db.DB.Exec("ALTER TABLE sites DROP COLUMN " + col); err != nil {
 				return err
 			}
 		}
@@ -269,38 +246,26 @@ func (db *Database) migrateDropStagingHostFields() error {
 	return nil
 }
 
-func (db *Database) migrateJobsProgressPercent() error {
-	rows, err := db.Query("PRAGMA table_info(jobs)")
+func (db *Database) migrateBackupsSnapshotID() error {
+	ok, err := db.hasColumn("backups", "snapshot_id")
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	hasProgressPercent := false
-	for rows.Next() {
-		var cid int
-		var name string
-		var columnType string
-		var notNull int
-		var defaultValue sql.NullString
-		var pk int
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+	if !ok {
+		if _, err := db.DB.Exec("ALTER TABLE backups ADD COLUMN snapshot_id TEXT"); err != nil {
 			return err
 		}
-		if name == "progress_percent" {
-			hasProgressPercent = true
-			break
-		}
 	}
-	if err := rows.Err(); err != nil {
+	return nil
+}
+
+func (db *Database) migrateJobsProgressPercent() error {
+	ok, err := db.hasColumn("jobs", "progress_percent")
+	if err != nil {
 		return err
 	}
-
-	if !hasProgressPercent {
-		if _, err := db.Exec("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return err
-		}
+	if !ok {
+		_, err = db.DB.Exec("ALTER TABLE jobs ADD COLUMN progress_percent INTEGER NOT NULL DEFAULT 0")
 	}
-
-	return nil
+	return err
 }

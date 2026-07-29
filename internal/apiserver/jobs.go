@@ -487,7 +487,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		log.Printf("restore completed for site %s: snapshot=%s", site.Name, tuple.req.SnapshotID)
-		setResult(fmt.Sprintf(`{"snapshot_id":"%s"}`, tuple.req.SnapshotID))
+		setResult(fmt.Sprintf(`{"snapshot_id":"%s","apply_db":%t,"apply_files":%t}`, tuple.req.SnapshotID, tuple.req.ApplyDB, tuple.req.ApplyFiles))
 
 	case "upgrade":
 		if wpRoot == "" {

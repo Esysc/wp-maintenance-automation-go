@@ -525,8 +525,18 @@
         const items = Array.isArray(j.data) ? j.data : [j.data];
         items.forEach(job => {
             const isActive = job.status === 'running' || job.status === 'queued';
+            let details = '';
+            if (job.type === 'restore' && job.result) {
+                try {
+                    const r = JSON.parse(job.result);
+                    const parts = [];
+                    if (r.apply_db) parts.push('DB');
+                    if (r.apply_files) parts.push('Files');
+                    if (parts.length) details = parts.join('+');
+                } catch (_) {}
+            }
             tbody.innerHTML += `<tr>
-                <td>${escapeHTML(jobTypeLabel(job))}</td>
+                <td>${escapeHTML(jobTypeLabel(job))}${details ? '<br><small>' + details + '</small>' : ''}</td>
                 <td>${escapeHTML(jobStatusLabel(job))}</td>
                 <td>${escapeHTML(jobProgressLabel(job))}</td>
                 <td>${escapeHTML((job.error || '').substring(0, 80))}</td>

@@ -89,6 +89,7 @@ func (s *APIServer) workerLoop() {
 
 func (s *APIServer) processJob(tuple *jobTuple) {
 	job := tuple.job
+	log.Printf("processing job %s (%s)", job.ID, job.Type)
 
 	condenseError := func(errMsg string) string {
 		errMsg = strings.TrimSpace(errMsg)

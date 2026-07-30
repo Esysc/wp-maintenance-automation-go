@@ -115,6 +115,18 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 		return nil, fmt.Errorf("wp-config patch failed: %w", err)
 	}
 
+	// Remove WP_HOME and WP_SITEURL constants from wp-config.php so they
+	// don't override the database values we set in updateSiteURL()
+	removeConstCmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp", "sed", "-i",
+		"/^define(.WP_HOME./d;/^define(.WP_SITEURL./d",
+		"/var/www/html/wp-config.php",
+	)
+	removeConstCmd.Env = os.Environ()
+	removeConstCmd.CombinedOutput()
+
 	if err := env.readTablePrefix(); err != nil {
 		env.cleanup()
 		return nil, fmt.Errorf("table prefix detection failed: %w", err)
@@ -376,8 +388,10 @@ func (env *StagingEnv) updateSiteURL() error {
 	prefixSQL := strings.ReplaceAll(env.TablePrefix, "`", "")
 
 	oldURL, _ := env.getSiteURL()
+	log.Printf("staging: getSiteURL returned '%s' (db=%s, prefix=%s)", oldURL, env.DBName, prefixSQL)
 
 	newURL := fmt.Sprintf("https://localhost:%s", env.HTTPSPort)
+	log.Printf("staging: newURL='%s'", newURL)
 
 	updateSQL := fmt.Sprintf(
 		"UPDATE `%s`.`%soptions` SET option_value='%s' WHERE option_name IN ('siteurl','home')",
@@ -396,6 +410,22 @@ func (env *StagingEnv) updateSiteURL() error {
 		log.Printf("staging: SQL siteurl update failed: %v\nOutput: %s", err, string(out))
 	}
 
+	// Also update via WP-CLI to ensure WordPress object cache is updated
+	wpOptionCmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp", "wp", "option", "update", "siteurl", newURL, "--allow-root",
+	)
+	wpOptionCmd.Env = os.Environ()
+	wpOptionCmd.CombinedOutput()
+	wpOptionCmd2 := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp", "wp", "option", "update", "home", newURL, "--allow-root",
+	)
+	wpOptionCmd2.Env = os.Environ()
+	wpOptionCmd2.CombinedOutput()
+
 	flushCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
@@ -407,6 +437,9 @@ func (env *StagingEnv) updateSiteURL() error {
 	}
 
 	if oldURL != "" && oldURL != newURL {
+		searchOld := strings.TrimRight(oldURL, "/")
+		searchNew := strings.TrimRight(newURL, "/")
+		log.Printf("staging: wp search-replace from '%s' to '%s'", searchOld, searchNew)
 		wpCLICmd := exec.Command("docker", "compose",
 			"-f", env.ComposeFile,
 			"-p", env.ProjectName,
@@ -414,11 +447,50 @@ func (env *StagingEnv) updateSiteURL() error {
 			"--all-tables", "--allow-root",
 			"--precise",
 			"--skip-columns=guid",
-			oldURL, newURL,
+			searchOld, searchNew,
 		)
 		wpCLICmd.Env = os.Environ()
 		if out, err := wpCLICmd.CombinedOutput(); err != nil {
-			log.Printf("staging: wp search-relace from '%s' to '%s' failed: %v\nOutput: %s", oldURL, newURL, err, string(out))
+			log.Printf("staging: wp search-replace from '%s' to '%s' failed: %v\nOutput: %s", searchOld, searchNew, err, string(out))
+		}
+
+		// Also replace www version if the old URL doesn't have www
+		if !strings.Contains(searchOld, "://www.") {
+			wwwOld := strings.Replace(searchOld, "://", "://www.", 1)
+			log.Printf("staging: wp search-replace (www) from '%s' to '%s'", wwwOld, searchNew)
+			wpCLICmd2 := exec.Command("docker", "compose",
+				"-f", env.ComposeFile,
+				"-p", env.ProjectName,
+				"exec", "-T", "wp", "wp", "search-replace",
+				"--all-tables", "--allow-root",
+				"--precise",
+				"--skip-columns=guid",
+				wwwOld, searchNew,
+			)
+			wpCLICmd2.Env = os.Environ()
+			if out, err := wpCLICmd2.CombinedOutput(); err != nil {
+				log.Printf("staging: wp search-replace (www) from '%s' to '%s' failed: %v\nOutput: %s", wwwOld, searchNew, err, string(out))
+			}
+
+			// Also replace bare domain (without protocol) for URLs stored without http://
+			oldDomain := strings.TrimPrefix(wwwOld, "https://")
+			oldDomain = strings.TrimPrefix(oldDomain, "http://")
+			newDomain := strings.TrimPrefix(searchNew, "https://")
+			newDomain = strings.TrimPrefix(newDomain, "http://")
+			log.Printf("staging: wp search-replace (bare domain) from '%s' to '%s'", oldDomain, newDomain)
+			wpCLICmd3 := exec.Command("docker", "compose",
+				"-f", env.ComposeFile,
+				"-p", env.ProjectName,
+				"exec", "-T", "wp", "wp", "search-replace",
+				"--all-tables", "--allow-root",
+				"--precise",
+				"--skip-columns=guid",
+				oldDomain, newDomain,
+			)
+			wpCLICmd3.Env = os.Environ()
+			if out, err := wpCLICmd3.CombinedOutput(); err != nil {
+				log.Printf("staging: wp search-replace (bare domain) from '%s' to '%s' failed: %v\nOutput: %s", oldDomain, newDomain, err, string(out))
+			}
 		}
 	}
 

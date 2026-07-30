@@ -36,9 +36,8 @@ COPY --from=builder /app/cli .
 RUN mkdir -p /app/data /app/logs /app/backup_artifacts /app/restore /etc/caddy/certs
 
 # Copy web files
-RUN mkdir -p /app/web/static /app/web/templates
+RUN mkdir -p /app/web/static
 COPY web/static /app/web/static
-COPY web/templates /app/web/templates
 
 # Copy API docs used by /api/docs endpoint
 RUN mkdir -p /app/api/docs

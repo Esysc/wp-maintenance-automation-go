@@ -57,7 +57,6 @@ services:
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
-      - ./web/templates:/app/web/templates:ro
       - ./web/static:/app/web/static:ro
       - ./api/docs:/app/api/docs:ro
     environment:

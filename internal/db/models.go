@@ -199,6 +199,18 @@ func (db *Database) GetBackupsBySite(siteID string) ([]*Backup, error) {
 	return backups, nil
 }
 
+func (db *Database) CountBackups() (int, error) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM backups").Scan(&count)
+	return count, err
+}
+
+func (db *Database) CountSnapshots() (int, error) {
+	var count int
+	err := db.QueryRow("SELECT COUNT(*) FROM backups WHERE snapshot_id != ''").Scan(&count)
+	return count, err
+}
+
 func (db *Database) DeleteBackup(id string) error {
 	_, err := db.Exec("DELETE FROM backups WHERE id = ?", id)
 	return err

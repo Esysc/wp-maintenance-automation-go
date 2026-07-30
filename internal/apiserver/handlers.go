@@ -115,6 +115,14 @@ func (s *APIServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status["sites"] = len(sites)
 	}
 
+	if backupCount, err := s.Database.CountBackups(); err == nil {
+		status["backups"] = backupCount
+	}
+
+	if snapshotCount, err := s.Database.CountSnapshots(); err == nil {
+		status["snapshots"] = snapshotCount
+	}
+
 	jsonResp(w, http.StatusOK, status)
 }
 

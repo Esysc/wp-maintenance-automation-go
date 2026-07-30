@@ -93,6 +93,7 @@ caddy_config/
 
 # Node.js
 node_modules/
+tsconfig.tsbuildinfo
 
 # Test results
 test-results/

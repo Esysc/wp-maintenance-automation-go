@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"html/template"
 	"io"
 	"log"
 	"math/big"
@@ -23,11 +22,10 @@ import (
 )
 
 type WebServer struct {
-	apiBaseURL  string
-	apiToken    string
-	client      *http.Client
-	staticDir   string
-	templateDir string
+	apiBaseURL string
+	apiToken   string
+	client     *http.Client
+	staticDir  string
 }
 
 func Run() {
@@ -46,11 +44,6 @@ func Run() {
 		staticDir = "./web/static"
 	}
 
-	templateDir := os.Getenv("TEMPLATE_DIR")
-	if templateDir == "" {
-		templateDir = "./web/templates"
-	}
-
 	s := &WebServer{
 		apiBaseURL: apiURL,
 		apiToken:   os.Getenv("WP_MAINTENANCE_TOKEN"),
@@ -60,8 +53,7 @@ func Run() {
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
 		},
-		staticDir:   staticDir,
-		templateDir: templateDir,
+		staticDir: staticDir,
 	}
 
 	mux := http.NewServeMux()
@@ -70,19 +62,6 @@ func Run() {
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, filepath.Join(staticDir, "favicon.svg"))
 	})
-	mux.HandleFunc("/login", s.handleLoginPage)
-	mux.HandleFunc("/dashboard", s.authMiddleware(s.handleDashboard))
-	mux.HandleFunc("/backups", s.authMiddleware(s.handleBackupsPage))
-	mux.HandleFunc("/backup/new", s.authMiddleware(s.handleNewBackup))
-	mux.HandleFunc("/restore", s.authMiddleware(s.handleRestorePage))
-	mux.HandleFunc("/upgrade", s.authMiddleware(s.handleUpgradePage))
-	mux.HandleFunc("/snapshots", s.authMiddleware(s.handleSnapshotsPage))
-	mux.HandleFunc("/healthcheck", s.authMiddleware(s.handleHealthcheckPage))
-	mux.HandleFunc("/rehearsal", s.authMiddleware(s.handleRehearsalPage))
-	mux.HandleFunc("/users", s.authMiddleware(s.handleUsersPage))
-	mux.HandleFunc("/tokens", s.authMiddleware(s.handleTokensPage))
-	mux.HandleFunc("/sites", s.authMiddleware(s.handleSitesPage))
-	mux.HandleFunc("/system", s.authMiddleware(s.handleSystemPage))
 	mux.HandleFunc("/api/login", s.handleAPILogin)
 	mux.HandleFunc("/api/auth/state", s.handleAPIAuthState)
 	mux.HandleFunc("/api/backup", s.authMiddleware(s.handleAPIBackup))
@@ -119,6 +98,9 @@ func Run() {
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	mux.Handle("/ui/assets/", http.StripPrefix("/ui/", http.FileServer(http.Dir(filepath.Join(staticDir, "ui")))))
+	mux.HandleFunc("/ui/", s.handleUISPA)
+	mux.HandleFunc("/ui", s.handleUISPA)
 
 	tlsDisable := os.Getenv("WEB_TLS_DISABLE")
 
@@ -180,78 +162,29 @@ func generateSelfSignedCert() (*tls.Certificate, error) {
 	return &cert, nil
 }
 
-func (s *WebServer) renderTemplate(w http.ResponseWriter, tmpl string, data map[string]interface{}) {
-	templatePath := filepath.Join(s.templateDir, tmpl)
-	if _, err := os.Stat(templatePath); os.IsNotExist(err) {
-		http.Error(w, "template not found", http.StatusInternalServerError)
-		return
-	}
-
-	t, err := template.ParseFiles(templatePath)
-	if err != nil {
-		http.Error(w, "failed to parse template", http.StatusInternalServerError)
-		return
-	}
-
-	if data == nil {
-		data = make(map[string]interface{})
-	}
-	data["Title"] = "WP Maintenance Automation"
-	data["Year"] = time.Now().Year()
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	t.Execute(w, data)
-}
-
 func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// For API endpoints, return 401 instead of redirecting
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			token := ""
-			if c, err := r.Cookie("token"); err == nil {
-				token = c.Value
-			}
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
-
-			if token == "" {
-				http.Error(w, `{"success":false,"error":"missing authorization"}`, http.StatusUnauthorized)
-				return
-			}
-
-			req, _ := http.NewRequest("GET", s.apiBaseURL+"/api/v1/status", nil)
-			req.Header.Set("Authorization", "Bearer "+token)
-			resp, err := s.client.Do(req)
-			if err != nil || resp.StatusCode != 200 {
-				http.Error(w, `{"success":false,"error":"invalid or expired token"}`, http.StatusUnauthorized)
-				return
-			}
-			resp.Body.Close()
-		} else {
-			// For web pages, redirect to login
-			token := ""
-			if c, err := r.Cookie("token"); err == nil {
-				token = c.Value
-			}
-			if token == "" {
-				token = r.URL.Query().Get("token")
-			}
-
-			if token == "" {
-				http.Redirect(w, r, "/login", http.StatusFound)
-				return
-			}
-
-			req, _ := http.NewRequest("GET", s.apiBaseURL+"/api/v1/status", nil)
-			req.Header.Set("Authorization", "Bearer "+token)
-			resp, err := s.client.Do(req)
-			if err != nil || resp.StatusCode != 200 {
-				http.Redirect(w, r, "/login", http.StatusFound)
-				return
-			}
-			resp.Body.Close()
+		token := ""
+		if c, err := r.Cookie("token"); err == nil {
+			token = c.Value
 		}
+		if token == "" {
+			token = r.URL.Query().Get("token")
+		}
+
+		if token == "" {
+			http.Error(w, `{"success":false,"error":"missing authorization"}`, http.StatusUnauthorized)
+			return
+		}
+
+		req, _ := http.NewRequest("GET", s.apiBaseURL+"/api/v1/status", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := s.client.Do(req)
+		if err != nil || resp.StatusCode != 200 {
+			http.Error(w, `{"success":false,"error":"invalid or expired token"}`, http.StatusUnauthorized)
+			return
+		}
+		resp.Body.Close()
 
 		next(w, r)
 	}
@@ -262,123 +195,7 @@ func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	token := ""
-	if c, err := r.Cookie("token"); err == nil {
-		token = c.Value
-	}
-
-	if token != "" {
-		http.Redirect(w, r, "/dashboard", http.StatusFound)
-		return
-	}
-
-	http.Redirect(w, r, "/login", http.StatusFound)
-}
-
-func (s *WebServer) handleLoginPage(w http.ResponseWriter, r *http.Request) {
-	s.renderTemplate(w, "login.html", nil)
-}
-
-func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "dashboard",
-	}
-	s.renderTemplate(w, "dashboard.html", data)
-}
-
-func (s *WebServer) handleBackupsPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "backups",
-	}
-	s.renderTemplate(w, "backups.html", data)
-}
-
-func (s *WebServer) handleNewBackup(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "POST" {
-		req, _ := http.NewRequest("POST", s.apiBaseURL+"/api/v1/backup", nil)
-		if c, err := r.Cookie("token"); err == nil {
-			req.Header.Set("Authorization", "Bearer "+c.Value)
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		resp, err := s.client.Do(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-
-		body, _ := io.ReadAll(resp.Body)
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(body)
-		return
-	}
-
-	http.Redirect(w, r, "/backups", http.StatusFound)
-}
-
-func (s *WebServer) handleRestorePage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "restore",
-	}
-	s.renderTemplate(w, "restore.html", data)
-}
-
-func (s *WebServer) handleUpgradePage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "upgrade",
-	}
-	s.renderTemplate(w, "upgrade.html", data)
-}
-
-func (s *WebServer) handleSnapshotsPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "snapshots",
-	}
-	s.renderTemplate(w, "snapshots.html", data)
-}
-
-func (s *WebServer) handleHealthcheckPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "healthcheck",
-	}
-	s.renderTemplate(w, "healthcheck.html", data)
-}
-
-func (s *WebServer) handleRehearsalPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "rehearsal",
-	}
-	s.renderTemplate(w, "rehearsal.html", data)
-}
-
-func (s *WebServer) handleUsersPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "users",
-	}
-	s.renderTemplate(w, "users.html", data)
-}
-
-func (s *WebServer) handleTokensPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "tokens",
-	}
-	s.renderTemplate(w, "tokens.html", data)
-}
-
-func (s *WebServer) handleSitesPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "sites",
-	}
-	s.renderTemplate(w, "sites.html", data)
-}
-
-func (s *WebServer) handleSystemPage(w http.ResponseWriter, r *http.Request) {
-	data := map[string]interface{}{
-		"ActivePage": "system",
-	}
-	s.renderTemplate(w, "system.html", data)
+	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
 }
 
 func (s *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
@@ -662,6 +479,10 @@ func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, b
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
+}
+
+func (s *WebServer) handleUISPA(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
 }
 
 func (s *WebServer) handleDocs(w http.ResponseWriter, r *http.Request) {

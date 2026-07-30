@@ -318,16 +318,38 @@ func (env *StagingEnv) copyFiles() error {
 		return nil
 	}
 
-	cmd := exec.Command("docker", "compose",
+	tarCmd := exec.Command("tar", "cf", "-", "-C", wpDir, ".")
+	dockerCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
-		"cp", wpDir+"/.", "wp:/var/www/html/",
+		"exec", "-T", "wp",
+		"tar", "xf", "-", "-C", "/var/www/html/",
 	)
-	cmd.Env = os.Environ()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w\nOutput: %s", err, string(output))
+	dockerCmd.Env = os.Environ()
+	dockerCmd.Stdin, _ = tarCmd.StdoutPipe()
+
+	if err := tarCmd.Start(); err != nil {
+		return fmt.Errorf("tar start failed: %w", err)
 	}
+	if err := dockerCmd.Start(); err != nil {
+		tarCmd.Process.Kill()
+		return fmt.Errorf("docker tar exec start failed: %w", err)
+	}
+	if err := tarCmd.Wait(); err != nil {
+		return fmt.Errorf("tar failed: %w", err)
+	}
+	if err := dockerCmd.Wait(); err != nil {
+		return fmt.Errorf("docker tar exec failed: %w", err)
+	}
+
+	chownCmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp",
+		"chown", "-R", "www-data:www-data", "/var/www/html/",
+	)
+	chownCmd.Env = os.Environ()
+	chownCmd.Run()
 
 	rmCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -490,6 +512,45 @@ func (env *StagingEnv) updateSiteURL() error {
 			wpCLICmd3.Env = os.Environ()
 			if out, err := wpCLICmd3.CombinedOutput(); err != nil {
 				log.Printf("staging: wp search-replace (bare domain) from '%s' to '%s' failed: %v\nOutput: %s", oldDomain, newDomain, err, string(out))
+			}
+		}
+	}
+
+	// Replace hardcoded URLs in physical files (e.g. Elementor-generated CSS)
+	if oldURL != "" && oldURL != newURL {
+		searchOld := strings.TrimRight(oldURL, "/")
+		searchNew := strings.TrimRight(newURL, "/")
+
+		sedCmd := exec.Command("docker", "compose",
+			"-f", env.ComposeFile,
+			"-p", env.ProjectName,
+			"exec", "-T", "wp",
+			"find", "/var/www/html/wp-content/",
+			"-type", "f",
+			"-exec", "sed", "-i",
+			fmt.Sprintf("s|%s|%s|g", searchOld, searchNew),
+			"{}", "+",
+		)
+		sedCmd.Env = os.Environ()
+		if out, err := sedCmd.CombinedOutput(); err != nil {
+			log.Printf("staging: sed URL replace in files failed: %v\nOutput: %s", err, string(out))
+		}
+
+		if !strings.Contains(searchOld, "://www.") {
+			wwwOld := strings.Replace(searchOld, "://", "://www.", 1)
+			sedWwwCmd := exec.Command("docker", "compose",
+				"-f", env.ComposeFile,
+				"-p", env.ProjectName,
+				"exec", "-T", "wp",
+				"find", "/var/www/html/wp-content/",
+				"-type", "f",
+				"-exec", "sed", "-i",
+				fmt.Sprintf("s|%s|%s|g", wwwOld, searchNew),
+				"{}", "+",
+			)
+			sedWwwCmd.Env = os.Environ()
+			if out, err := sedWwwCmd.CombinedOutput(); err != nil {
+				log.Printf("staging: sed www URL replace in files failed: %v\nOutput: %s", err, string(out))
 			}
 		}
 	}

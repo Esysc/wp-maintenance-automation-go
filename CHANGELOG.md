@@ -4,7 +4,19 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.3.0] - 2026-07-31
+
+### Added
+- Docker-host metrics on the System page: live host CPU/memory/disk plus per-container stats.
+- Optional host agent (`cmd/host-agent`) exposing real-host metrics at `/metrics`; API prefers `HOST_AGENT_URL` and falls back to Docker host metrics.
+- Frontend migrated to Vite + React SPA.
+
+### Fixed
+- Login page reload loop caused by a stale/expired auth token (401 now clears the session and routes to login without a hard page reload).
+- Rehearsal page showing a stopped staging environment as "Active" — the active state is now verified against live container state via `GET /api/v1/rehearsal/active`.
+- Logout 404 and SPA fallback routing.
+- `parseBytes` handling of `docker stats` no-separator sizes (e.g. `2.969MiB`).
+- Container CPU usage hidden while idle (0.00% now displayed).
 
 ## [0.2.0] - 2026-07-26
 

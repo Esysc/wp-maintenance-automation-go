@@ -16,7 +16,7 @@ Thank you for your interest in contributing to WP Maintenance Automation Go! Thi
 ### Prerequisites
 
 Make sure you have the following installed:
-- Go 1.21 or higher
+- Go 1.25 or higher
 - Docker and Docker Compose (for development/testing)
 - Git
 - SSH client access to test servers

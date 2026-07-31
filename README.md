@@ -10,8 +10,9 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - **Automated Upgrades**: WordPress core, plugins, themes, and database upgrades with health checks
 - **Automatic Rollback**: Automatic rollback on upgrade failure
 - **Staging Rehearsal**: Ephemeral Docker-based staging — spins up a local WordPress + MariaDB stack from a backup snapshot, runs the full upgrade, healthchecks it, then destroys the environment on success (keeps it on failure for debugging)
-- **RESTful API**: API endpoints for backup, upgrade, restore, and staging operations
+- **RESTful API**: API endpoints for backup, upgrade, restore, staging, jobs, and metrics
 - **Web Interface**: Modern web UI for monitoring and managing WordPress sites
+- **Docker Host Metrics**: Live host CPU/memory/disk and per-container stats on the System page, via Docker host info or an optional host agent
 - **CLI Client**: Command-line interface for scripting and automation
 - **Multi-language UI**: 9 languages (EN, FR, IT, ES, PT, ZH, JA, KO, RU)
 
@@ -31,7 +32,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - `POST /api/v1/auth/change-password` - Change password (auth required)
 - `GET /api/v1/health` - Health check
 - `GET /api/v1/status` - System status overview
-- `GET/POST /api/v1/backups` - List / create backups
+- `GET /api/v1/backups` - List backups (filter with `?site_id=`)
 - `GET/DELETE /api/v1/backups/:id` - Backup details / delete
 - `POST /api/v1/backup` - Create a backup for a site
 - `POST /api/v1/restore` - Restore a snapshot to a site
@@ -46,6 +47,14 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - `GET/POST /api/v1/tokens` - List / create API tokens
 - `DELETE /api/v1/tokens/:id` - Revoke token
 - `POST /api/v1/staging/cleanup` - Destroy a kept staging environment
+- `POST /api/v1/rehearsal` - Start a staging rehearsal for a site
+- `GET /api/v1/rehearsal/active` - Check whether a rehearsal environment is actually running
+- `GET /api/v1/rehearsal/:id` - Rehearsal job details
+- `POST /api/v1/rehearsal/:id/stop` - Stop a rehearsal and destroy its staging environment
+- `POST /api/v1/rehearsal/:id/wpcli` - Run a WP-CLI command in a rehearsal environment
+- `GET/POST /api/v1/jobs` - List / get background jobs (filter by `site_id`, `type`, `all`)
+- `GET/DELETE /api/v1/jobs/:id` - Job details / cancel
+- `GET /api/v1/metrics` - Host + container metrics
 
 ### Web Interface
 - Dashboard for monitoring backup status
@@ -69,12 +78,20 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 docker compose up -d
 ```
 
-This starts three services:
+This starts four services:
 - **Caddy** (port 80/443) - Reverse proxy with automatic HTTPS
 - **API** (port 8081) - REST API server
 - **Web** (port 8080) - Web UI server
+- **DB** (127.0.0.1:5432) - PostgreSQL storage
 
 Access the web UI at `https://localhost` (or `http://localhost` which redirects to HTTPS).
+
+Optional services (MySQL/WordPress test stack, restic REST storage) are behind compose profiles:
+
+```bash
+docker compose --profile test up -d   # MySQL + WordPress for local testing
+docker compose --profile backup up -d # restic REST server
+```
 
 ### Local Development
 
@@ -96,9 +113,11 @@ make build
 
 Or build individually:
 ```bash
-make build-api     # builds bin/wp-maintenance-api
-make build-web     # builds bin/wp-maintenance-web
-make build-cli     # builds bin/wp-maintenance
+make build-api         # builds bin/wp-maintenance-api
+make build-web         # builds bin/wp-maintenance-web
+make build-cli         # builds bin/wp-maintenance
+make build-server      # builds bin/wp-maintenance-server
+make build-host-agent  # builds bin/host-agent
 ```
 
 4. Configure environment:
@@ -148,15 +167,24 @@ Key environment variables (see `.env.example`):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `API_PORT` | `8081` | API server port |
+| `PORT` | `8081` | Alias for `API_PORT` |
 | `WEB_PORT` | `8080` | Web UI server port |
 | `API_URL` | `http://localhost:8081` | API URL for web proxy |
+| `DB_HOST` | - | PostgreSQL host (compose sets it to `db`) |
+| `DB_PORT` | - | PostgreSQL port (compose sets it to `5432`) |
+| `DB_USER` | `wpmaint` | PostgreSQL user |
+| `DB_PASSWORD` | `wpmaint` | PostgreSQL password |
+| `DB_NAME` | `wpmaintenance` | PostgreSQL database name |
 | `DATA_DIR` | `./data` | Data directory (DB, logs) |
+| `STATIC_DIR` | `./web/static` | Web static assets directory |
 | `LOG_LEVEL` | `info` | Log level |
 | `DEBUG` | `false` | Enable debug mode |
 | `SECRET_KEY` | `default-secret-key` | JWT signing / encryption key |
 | `DATA_ENCRYPTION_KEY` | falls back to `SECRET_KEY` | AES-GCM encryption key |
 | `RESTIC_REPOSITORY` | - | Global restic repository (optional). Format: `s3:https://…`, `b2:…`, `gs:…`, `azure:…`, `sftp:…`, `rest:…`, `/local/path` or `local:/path`. See [restic docs](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html). |
 | `RESTIC_PASSWORD_FILE` | - | Global restic password file (optional) |
+| `HOST_AGENT_URL` | - | URL of the host agent for real-host metrics (e.g. `http://127.0.0.1:9100`). Empty falls back to Docker host metrics |
+| `COMPOSE_PROJECT_NAME` | - | Docker Compose project name, used to identify the app's own containers in host metrics |
 | `TLS_DISABLE` | `false` | Disable API TLS |
 | `WEB_TLS_DISABLE` | `false` | Disable Web TLS |
 | `WP_MAINTENANCE_TOKEN` | - | Pre-shared token for web->API auth |
@@ -211,6 +239,28 @@ When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an e
 
 Docker socket access (`/var/run/docker.sock`) must be mounted into the API container for staging to work. This is configured in `docker-compose.yml` by default.
 
+## Host Metrics
+
+The System page (`/system`) shows real host metrics (CPU, memory, disk) and per-container stats. The API gathers host info from two sources:
+
+1. **Docker host** (default) — host CPU/memory/disk are read from Docker Desktop/Engine info.
+2. **Host agent** — a small daemon that reports the actual machine's metrics, useful when the Docker host is a VM (e.g. Docker Desktop on macOS) or when the API container is remote.
+
+Build and run the agent on the host machine:
+
+```bash
+make build-host-agent        # builds bin/host-agent
+./bin/host-agent             # serves /metrics on 127.0.0.1:9100 by default
+```
+
+Then point the API at it via `HOST_AGENT_URL`:
+
+```bash
+HOST_AGENT_URL=http://127.0.0.1:9100 docker compose up -d --build api
+```
+
+When `HOST_AGENT_URL` is unset, the API falls back to Docker host info automatically.
+
 ## Authentication and Login Modes
 
 - Login supports two modes:
@@ -252,15 +302,17 @@ go run ./cmd/cli reset-password
 
 ## API Documentation
 
-Full API documentation available at `/api/docs` (when running with Swagger integration).
+The web server serves an interactive OpenAPI/Swagger UI and the machine-readable spec at `/api/docs` (source: `api/docs/openapi.yaml`). The spec can drive client code generation for CI integrations.
+
+All API responses use a uniform envelope: `{"success": true, "data": <payload>}` on success and `{"success": false, "error": "<message>"}` on failure. The examples below read the relevant field from the envelope (e.g. `.data.token`, `.data.job_id`).
 
 ### Example Usage
 
-Login and get a token:
+Login and get a 24-hour token:
 ```bash
-curl -X POST https://localhost/api/v1/auth/login \
+curl -sX POST https://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"password":"your-password"}'
+  -d '{"password":"your-password"}' | jq -r '.data.token'
 ```
 
 Use the token for authenticated requests:
@@ -269,13 +321,95 @@ TOKEN="<your-token>"
 curl -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/status
 ```
 
-Create a backup for a site:
+Queue a backup for a site (site IDs are hex strings from the sites list):
 ```bash
-curl -X POST https://localhost/api/v1/backups \
+curl -sX POST https://localhost/api/v1/backup \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
-  -d '{"site_id":1}'
+  -d '{"site_id":"<site-id>"}' | jq -r '.data.job_id'
 ```
+Poll `GET /api/v1/jobs/:job_id` (read `.data.status`) until it reaches `completed`.
+
+## CI/CD Automation
+
+The API is designed for unattended use in pipelines. All endpoints (except `/api/v1/health`, `/api/v1/auth/state`, and `/api/v1/auth/login`) authenticate with a bearer token, so no interactive login is required.
+
+### 1. Create a long-lived API token
+
+Instead of the 24-hour web-session token, create an API token once (via the Web UI *Tokens* page or the CLI) and store it as a CI secret:
+
+```bash
+# create token for the admin user (persisted until revoked)
+./bin/wp-maintenance token create <user_id> ci-backups 8760
+```
+
+Or via the API (`duration` is in hours; the token is created for the admin user):
+```bash
+curl -sX POST https://localhost/api/v1/tokens \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"name":"ci-backups","duration":8760}' | jq -r '.data.token'
+```
+Store the returned token in your CI secret store.
+
+### 2. Authenticate
+
+CI clients can authenticate with the token in the `Authorization` header (as in the examples above) or in the query string for clients that cannot set headers:
+
+```bash
+curl "https://localhost/api/v1/status?token=$CI_TOKEN"
+```
+
+### 3. Drive jobs
+
+Backup, restore, upgrade, and rehearsal endpoints are asynchronous: they enqueue a background job and return a `job_id`. Poll `GET /api/v1/jobs/:job_id` and check the `status` field (`queued`, `running`, `completed`, `failed`, `cancelled`).
+
+Example GitHub Actions workflow running a nightly backup:
+
+```yaml
+name: nightly-backup
+on:
+  schedule:
+    - cron: '0 2 * * *'
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue backup
+        id: backup
+        run: |
+          RESPONSE="$(curl -fsS -X POST "https://${{ vars.APP_HOST }}/api/v1/backup" \
+            -H "Authorization: Bearer ${{ secrets.WP_MAINTENANCE_TOKEN }}" \
+            -d "{\"site_id\":\"${{ vars.WP_SITE_ID }}\"}")"
+          JOB_ID="$(echo "$RESPONSE" | jq -r '.data.job_id')"
+          echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
+      - name: Poll job until completion
+        env:
+          JOB_ID: ${{ steps.backup.outputs.job_id }}
+        run: |
+          for i in $(seq 1 60); do
+            STATUS="$(curl -fsS -H "Authorization: Bearer ${{ secrets.WP_MAINTENANCE_TOKEN }}" \
+              "https://${{ vars.APP_HOST }}/api/v1/jobs/$JOB_ID" | jq -r '.data.status')"
+            [ "$STATUS" = "completed" ] && echo "backup OK" && exit 0
+            [ "$STATUS" = "failed" ] && echo "backup failed" && exit 1
+            sleep 10
+          done
+          echo "timeout waiting for job" && exit 1
+```
+
+### 4. CLI for scripting
+
+The CLI (`bin/wp-maintenance`) wraps the same API and is well suited for scripts and local automations. Point it at the API with `API_URL` and authenticate with `WP_MAINTENANCE_TOKEN`:
+
+```bash
+export API_URL=https://localhost:8081
+export WP_MAINTENANCE_TOKEN="$CI_TOKEN"
+./bin/wp-maintenance backup -s <site-id>
+./bin/wp-maintenance snapshots
+./bin/wp-maintenance jobs --site-id <site-id>
+```
+
+See `./bin/wp-maintenance help` for the full command list.
 
 ## Project Structure
 
@@ -285,18 +419,23 @@ wp-maintenance-automation-go/
 │   ├── api/main.go         # API server entry point
 │   ├── cli/main.go         # CLI client entry point
 │   ├── server/main.go      # Combined API + Web server
-│   └── web/main.go         # Web UI server entry point
+│   ├── web/main.go         # Web UI server entry point
+│   └── host-agent/main.go  # Host metrics agent daemon
 ├── api/docs/               # API documentation (Swagger)
 ├── internal/
+│   ├── apiserver/          # HTTP API server, routes, handlers, job worker
 │   ├── auth/               # Authentication (users, tokens, bcrypt)
 │   ├── backup/             # Backup creation & management
 │   ├── config/             # Configuration management
+│   ├── db/                 # PostgreSQL persistence, models, encryption at rest
 │   ├── healthcheck/        # HTTP health checking
+│   ├── metrics/            # Host + container metrics collection
 │   ├── restic/             # Restic client wrapper
 │   ├── restore/            # Restore operations
 │   ├── ssh/                # SSH/rsync operations
 │   ├── staging/            # Ephemeral Docker staging environment
-│   └── upgrade/            # WordPress upgrade orchestrator
+│   ├── upgrade/            # WordPress upgrade orchestrator
+│   └── webserver/          # Web UI server, SPA + API reverse proxy
 ├── staging/                # Docker support files for staging
 │   ├── Dockerfile.wp       # WordPress container image
 │   ├── docker-compose.template.yml
@@ -308,11 +447,11 @@ wp-maintenance-automation-go/
 │   ├── models/            # Shared data models
 │   └── utils/             # Utility functions
 ├── web/
-│   ├── static/             # Static assets (CSS, JS, locales)
-│   └── templates/          # HTML templates
-├── tests/                  # Integration tests
+│   ├── ui/                 # Vite + React SPA source
+│   └── static/             # Built assets (CSS, JS, locales, UI bundle)
 ├── Makefile                # Build and development utilities
-└── docker-compose.yml      # Docker Compose configuration
+├── docker-compose.yml      # Docker Compose configuration
+└── Caddyfile               # Caddy reverse-proxy configuration
 ```
 
 ## Testing

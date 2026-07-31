@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
+import { useLanguage, LANGUAGE_OPTIONS } from '../context/LanguageContext'
 
 function passwordStrength(password: string): number {
   let score = 0
@@ -18,6 +19,7 @@ const strengthLabels = ['Very weak', 'Weak', 'Fair', 'Good', 'Strong', 'Excellen
 export default function Login() {
   const { setupRequired, loading, login } = useAuth()
   const { toast } = useToast()
+  const { lang, setLang, t } = useLanguage()
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
@@ -62,6 +64,14 @@ export default function Login() {
     <div className="login-container">
       <div className="login-card">
         <h1>WP Maintenance Automation</h1>
+        <div className="language-selector">
+          <label htmlFor="loginLanguage">{t('form_language')}</label>
+          <select id="loginLanguage" value={lang} onChange={e => setLang(e.target.value as typeof lang)}>
+            {LANGUAGE_OPTIONS.map(opt => (
+              <option key={opt} value={opt}>{opt.toUpperCase()}</option>
+            ))}
+          </select>
+        </div>
         <h2>{setupRequired ? 'Create your admin password' : 'Enter your password to continue'}</h2>
         <form onSubmit={handleSubmit}>
           <div className="field-floating">

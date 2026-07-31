@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import { useToast } from '../context/ToastContext'
-import { LANGUAGE_OPTIONS, getPreferredLanguage, getTranslation, setLanguage as setI18nLang, type Language } from '../i18n'
+import { useLanguage, LANGUAGE_OPTIONS } from '../context/LanguageContext'
 import { useState } from 'react'
 
 const NAV_ITEMS = [
@@ -21,16 +21,17 @@ const NAV_ITEMS = [
 
 export default function Layout({ children }: { children: ReactNode }) {
   const { logout } = useAuth()
+  const { toast } = useToast()
+  const { lang, setLang, t } = useLanguage()
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [lang, setLang] = useState<Language>(getPreferredLanguage())
 
   useEffect(() => {
     document.documentElement.lang = lang
   }, [lang])
 
   const currentPage = NAV_ITEMS.find(i => location.pathname.startsWith(i.to))
-  const pageTitle = currentPage ? getTranslation(currentPage.key, lang) : ''
+  const pageTitle = currentPage ? t(currentPage.key) : ''
 
   const now = new Date()
   const dateLabel = now.toLocaleDateString(lang, { weekday: 'short', month: 'short', day: 'numeric' })
@@ -48,26 +49,36 @@ export default function Layout({ children }: { children: ReactNode }) {
             <li key={item.to}>
               <NavLink to={item.to} end={item.to === '/dashboard'} onClick={() => setSidebarOpen(false)}
                 className={({ isActive }) => isActive ? 'active' : ''}>
-                {getTranslation(item.key, lang)}
+                {t(item.key)}
               </NavLink>
             </li>
           ))}
         </ul>
         <div className="sidebar-footer">
           <a href="/login" onClick={e => { e.preventDefault(); logout() }}>
-            {getTranslation('nav_logout', lang)}
+            {t('nav_logout')}
           </a>
         </div>
       </nav>
       <main className="main-content">
         <div className="page-topbar">
           <div className="crumbs">
-            <span className="crumb-chip">{getTranslation('header_control_panel', lang)}</span>
+            <span className="crumb-chip">{t('header_control_panel')}</span>
             <span className="crumb-sep">/</span>
-            <span className="crumb-current">{pageTitle || getTranslation('nav_dashboard', lang)}</span>
+            <span className="crumb-current">{pageTitle || t('nav_dashboard')}</span>
           </div>
           <div className="topbar-meta">
-            <span className="meta-pill">{getTranslation('header_live_api', lang)}</span>
+            <select
+              className="lang-select"
+              value={lang}
+              onChange={e => setLang(e.target.value as typeof lang)}
+              aria-label={t('form_language')}
+            >
+              {LANGUAGE_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>{opt.toUpperCase()}</option>
+              ))}
+            </select>
+            <span className="meta-pill">{t('header_live_api')}</span>
             <span className="meta-pill">{dateLabel}</span>
           </div>
         </div>

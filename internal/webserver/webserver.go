@@ -191,10 +191,6 @@ func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		http.NotFound(w, r)
-		return
-	}
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
 }
 

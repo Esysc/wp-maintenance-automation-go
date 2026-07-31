@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
+import { LanguageProvider } from './context/LanguageContext'
 import { loadLocale, getPreferredLanguage } from './i18n'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -36,9 +37,10 @@ function App() {
 
   return (
     <BrowserRouter>
-      <ToastProvider>
-        <AuthProvider>
-          <Routes>
+      <LanguageProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/dashboard" element={<AuthGuard><Dashboard /></AuthGuard>} />
             <Route path="/backups" element={<AuthGuard><Backups /></AuthGuard>} />
@@ -53,9 +55,10 @@ function App() {
             <Route path="/system" element={<AuthGuard><System /></AuthGuard>} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </AuthProvider>
-      </ToastProvider>
+            </Routes>
+          </AuthProvider>
+        </ToastProvider>
+      </LanguageProvider>
     </BrowserRouter>
   )
 }

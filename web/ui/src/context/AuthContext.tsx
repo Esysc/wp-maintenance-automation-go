@@ -45,7 +45,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     document.cookie = 'token=; Max-Age=0; path=/'
     setAuthenticated(false)
-    window.location.href = '/login'
   }, [])
 
   return (

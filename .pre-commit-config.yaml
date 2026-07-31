@@ -25,3 +25,9 @@ repos:
         language: system
         types: [go]
         pass_filenames: false
+
+      - id: ts-build
+        name: TypeScript React build check
+        entry: bash -c 'cd web/ui && npx tsc -b >/dev/null 2>&1 && npm run build >/dev/null 2>&1'
+        language: system
+        pass_filenames: false

@@ -440,6 +440,52 @@ body {
 	box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.2);
 }
 
+.language-selector {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	justify-content: center;
+	margin: 16px 0 24px;
+}
+
+.language-selector label {
+	color: var(--muted);
+	font-size: 0.82rem;
+	font-weight: 600;
+}
+
+.language-selector select {
+	border: 1px solid var(--line);
+	border-radius: 999px;
+	padding: 0.3rem 0.9rem;
+	background: rgba(255, 255, 255, 0.92);
+	color: var(--ink);
+	font: inherit;
+	font-size: 0.8rem;
+	cursor: pointer;
+}
+
+.language-selector select:focus {
+	outline: none;
+	border-color: rgba(99, 102, 241, 0.7);
+}
+
+.lang-select {
+	border: 1px solid rgba(129, 140, 248, 0.32);
+	border-radius: 999px;
+	background: rgba(255, 255, 255, 0.85);
+	color: var(--ink);
+	font-size: 0.74rem;
+	font-weight: 700;
+	padding: 0.14rem 0.4rem;
+	cursor: pointer;
+}
+
+.lang-select:focus {
+	outline: none;
+	border-color: rgba(99, 102, 241, 0.7);
+}
+
 .field-floating {
 	position: relative;
 	margin-bottom: 0.9rem;

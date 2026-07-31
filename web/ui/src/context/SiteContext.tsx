@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
 import { apiGet } from '../api/client'
+import { useAuth } from './AuthContext'
 
 export interface SiteSummary {
   id: string
@@ -18,6 +19,7 @@ interface SiteState {
 const SiteContext = createContext<SiteState | null>(null)
 
 export function SiteProvider({ children }: { children: ReactNode }) {
+  const { authenticated } = useAuth()
   const [sites, setSites] = useState<SiteSummary[]>([])
   const [siteId, setSiteId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -32,7 +34,13 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     setLoading(false)
   }, [])
 
-  useEffect(() => { reload() }, [reload])
+  useEffect(() => {
+    if (authenticated) {
+      reload()
+    } else {
+      setLoading(false)
+    }
+  }, [authenticated, reload])
 
   return (
     <SiteContext.Provider value={{ sites, siteId, setSiteId, loading, reload }}>

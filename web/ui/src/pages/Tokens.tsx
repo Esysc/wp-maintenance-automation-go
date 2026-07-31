@@ -73,7 +73,7 @@ export default function Tokens() {
         toast(t('token_revoked'), 'success')
         if (currentSessionId && id === currentSessionId) {
           document.cookie = 'token=; Max-Age=0; path=/'
-          window.location.href = '/login'
+          window.dispatchEvent(new Event('auth:unauthorized'))
           return
         }
         load()

@@ -13,14 +13,13 @@ async function request<T>(url: string, options: RequestInit = {}, silent = false
   }
   const resp = await fetch(url, { ...options, headers })
   if (resp.redirected && resp.url.includes('/login')) {
-    window.location.href = '/login'
+    window.dispatchEvent(new Event('auth:unauthorized'))
     throw new Error('redirected to login')
   }
   if (resp.status === 401) {
     document.cookie = 'token=; Max-Age=0; path=/'
     if (!silent) {
-      window.location.href = '/login'
-      throw new Error('unauthorized')
+      window.dispatchEvent(new Event('auth:unauthorized'))
     }
     throw new Error('unauthorized')
   }

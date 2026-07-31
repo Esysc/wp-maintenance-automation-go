@@ -21,6 +21,13 @@ interface RehearsalJob {
   result: string
 }
 
+interface RehearsalActive {
+  job_id: string
+  status: string
+  active: boolean
+  env: RehearsalEnv | null
+}
+
 interface ResticSnapshot {
   short_id: string
   id: string
@@ -56,16 +63,18 @@ export default function Rehearsal() {
   }
 
   async function checkRunningRehearsal() {
-    const res = await apiGet<RehearsalJob>('/api/v1/jobs?site_id=' + siteId + '&type=rehearsal')
+    const res = await apiGet<RehearsalActive>('/api/v1/rehearsal/active?site_id=' + siteId)
     if (res.success && res.data) {
-      const j = res.data
-      if (j.status === 'completed' && j.result) {
-        try {
-          setEnv(JSON.parse(j.result))
-          setActiveJobId(j.id)
-        } catch { /* ignore */ }
-      } else if (j.status === 'running' || j.status === 'queued') {
-        setActiveJobId(j.id)
+      const d = res.data
+      if (d.status === 'running' || d.status === 'queued') {
+        setEnv(null)
+        setActiveJobId(d.job_id || null)
+      } else if (d.active && d.env) {
+        setEnv(d.env)
+        setActiveJobId(d.job_id)
+      } else {
+        setEnv(null)
+        setActiveJobId(null)
       }
     }
   }

@@ -152,6 +152,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleStagingCleanup))
 
 	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleRehearsal))
+	mux.HandleFunc("/api/v1/rehearsal/active", s.authMiddleware(s.handleRehearsalActive))
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleRehearsalByID))
 
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleJobs))

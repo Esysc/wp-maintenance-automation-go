@@ -180,6 +180,25 @@ func (env *StagingEnv) Logs() (string, error) {
 	return string(output), err
 }
 
+// IsRunning reports whether any container for this staging environment is
+// currently running, regardless of the recorded job status.
+func (env *StagingEnv) IsRunning() bool {
+	if env == nil || env.ProjectName == "" {
+		return false
+	}
+	cmd := exec.Command("docker", "ps",
+		"--filter", "label=com.docker.compose.project="+env.ProjectName,
+		"--filter", "status=running",
+		"--format", "{{.ID}}",
+	)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(output)) != ""
+}
+
 func (env *StagingEnv) up() error {
 	args := []string{
 		"compose", "-f", env.ComposeFile,

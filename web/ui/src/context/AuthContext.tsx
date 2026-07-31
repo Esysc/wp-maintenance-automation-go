@@ -31,6 +31,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })()
   }, [])
 
+  useEffect(() => {
+    const onUnauthorized = () => setAuthenticated(false)
+    window.addEventListener('auth:unauthorized', onUnauthorized)
+    return () => window.removeEventListener('auth:unauthorized', onUnauthorized)
+  }, [])
+
   const login = useCallback(async (password: string, passwordConfirm?: string): Promise<string | null> => {
     const body: Record<string, string> = { password }
     if (passwordConfirm) body.passwordConfirm = passwordConfirm

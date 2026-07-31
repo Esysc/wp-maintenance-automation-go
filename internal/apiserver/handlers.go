@@ -940,6 +940,80 @@ func (s *APIServer) handleRehearsal(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	siteID := r.URL.Query().Get("site_id")
+	if siteID == "" {
+		apiErr(w, http.StatusBadRequest, "site_id is required")
+		return
+	}
+
+	job, err := s.Database.GetLatestJobBySiteWithType(siteID, "rehearsal")
+	if err != nil {
+		apiErr(w, http.StatusInternalServerError, "failed to get rehearsal job")
+		return
+	}
+
+	if job == nil || job.Result == "" {
+		jsonResp(w, http.StatusOK, map[string]interface{}{
+			"job_id": "",
+			"status": "",
+			"active": false,
+			"env":    nil,
+		})
+		return
+	}
+
+	status := job.Status
+	if status != "completed" {
+		jsonResp(w, http.StatusOK, map[string]interface{}{
+			"job_id": job.ID,
+			"status": status,
+			"active": false,
+			"env":    nil,
+		})
+		return
+	}
+
+	var envData struct {
+		HealthURL   string `json:"health_url"`
+		ComposeFile string `json:"compose_file"`
+		ProjectName string `json:"project_name"`
+		WPVersion   string `json:"wp_version"`
+		DBName      string `json:"db_name"`
+		SnapshotID  string `json:"snapshot_id"`
+	}
+
+	active := false
+	if err := json.Unmarshal([]byte(job.Result), &envData); err == nil {
+		if envData.ComposeFile != "" && envData.ProjectName != "" && s.StagingManager != nil {
+			env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, "", envData.HealthURL)
+			active = env.IsRunning()
+		}
+	}
+
+	if !active {
+		jsonResp(w, http.StatusOK, map[string]interface{}{
+			"job_id": job.ID,
+			"status": status,
+			"active": false,
+			"env":    nil,
+		})
+		return
+	}
+
+	jsonResp(w, http.StatusOK, map[string]interface{}{
+		"job_id": job.ID,
+		"status": status,
+		"active": true,
+		"env":    envData,
+	})
+}
+
 func (s *APIServer) handleRehearsalByID(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/rehearsal/")
 

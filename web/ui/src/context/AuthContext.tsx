@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import { apiGet, apiPost, type ApiResponse } from '../api/client'
+import { apiGet, apiPost, checkAuth, type ApiResponse } from '../api/client'
 
 interface AuthState {
   authenticated: boolean
@@ -22,9 +22,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const res = await apiGet<{ setup_required?: boolean }>('/api/v1/auth/state')
         if (res.success && res.data) {
           setSetupRequired(!!res.data.setup_required)
-          setAuthenticated(!res.data.setup_required)
         }
-      } catch { /* not authenticated */ }
+        setAuthenticated(await checkAuth())
+      } catch {
+        setAuthenticated(false)
+      }
       setLoading(false)
     })()
   }, [])

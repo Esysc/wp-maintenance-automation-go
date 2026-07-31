@@ -122,6 +122,8 @@ func Run() {
 	mux.HandleFunc("/api/v1/health", s.handleHealth)
 	mux.HandleFunc("/api/v1/status", s.handleStatus)
 
+	mux.HandleFunc("/api/v1/metrics", s.authMiddleware(s.handleMetrics))
+
 	mux.HandleFunc("/api/v1/auth/login", s.handleLogin)
 	mux.HandleFunc("/api/v1/auth/state", s.handleAuthState)
 	mux.HandleFunc("/api/v1/auth/change-password", s.authMiddleware(s.handleChangePassword))

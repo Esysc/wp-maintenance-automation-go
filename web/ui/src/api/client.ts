@@ -3,7 +3,7 @@ function getToken(): string {
   return match ? match[1] : ''
 }
 
-async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(url: string, options: RequestInit = {}, silent = false): Promise<T> {
   const headers: Record<string, string> = {
     'Authorization': 'Bearer ' + getToken(),
     ...(options.headers as Record<string, string> || {}),
@@ -18,7 +18,10 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<T> {
   }
   if (resp.status === 401) {
     document.cookie = 'token=; Max-Age=0; path=/'
-    window.location.href = '/login'
+    if (!silent) {
+      window.location.href = '/login'
+      throw new Error('unauthorized')
+    }
     throw new Error('unauthorized')
   }
   if (!resp.ok) {
@@ -63,4 +66,15 @@ export async function apiPut<T>(url: string, body?: unknown): Promise<ApiRespons
 
 export async function apiDelete<T>(url: string): Promise<ApiResponse<T>> {
   return request<ApiResponse<T>>(url, { method: 'DELETE' })
+}
+
+export async function checkAuth(): Promise<boolean> {
+  try {
+    const resp = await fetch('/api/v1/sites', {
+      headers: { 'Authorization': 'Bearer ' + getToken() },
+    })
+    return resp.status === 200
+  } catch {
+    return false
+  }
 }

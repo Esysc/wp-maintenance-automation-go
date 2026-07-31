@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import Modal from './Modal'
+import { useLanguage } from '../context/LanguageContext'
 
 interface Props {
   open: boolean
@@ -6,36 +7,24 @@ interface Props {
   message: string
   onConfirm: () => void
   onCancel: () => void
+  busy?: boolean
 }
 
-export default function ConfirmDialog({ open, title, message, onConfirm, onCancel }: Props) {
-  useEffect(() => {
-    if (!open) return
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open, onCancel])
-
-  if (!open) return null
+export default function ConfirmDialog({ open, title, message, onConfirm, onCancel, busy }: Props) {
+  const { t } = useLanguage()
 
   return (
-    <div className="modal show" style={{ display: 'block' }}>
-      <button className="modal-backdrop" onClick={onCancel} />
-      <div className="modal-dialog modal-sm">
-        <div className="modal-header">
-          <h3>{title}</h3>
-          <button type="button" className="icon-btn" onClick={onCancel}>x</button>
-        </div>
-        <div className="modal-body">
-          <p>{message}</p>
-        </div>
-        <div className="modal-actions">
-          <button type="button" className="btn" onClick={onCancel}>Cancel</button>
-          <button type="button" className="btn btn-danger" onClick={onConfirm}>Confirm</button>
-        </div>
+    <Modal open={open} title={title} onClose={busy ? () => {} : onCancel} size="sm">
+      <div className="modal-body">
+        <p>{message}</p>
       </div>
-    </div>
+      <div className="modal-actions">
+        <button type="button" className="btn" onClick={onCancel} disabled={busy}>{t('btn_cancel')}</button>
+        <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={busy}>
+          {busy && <span className="spinner" />}
+          {busy ? t('btn_processing') : t('btn_confirm')}
+        </button>
+      </div>
+    </Modal>
   )
 }

@@ -1,5 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
-import { apiGet, apiPost, type ApiResponse } from '../api/client'
+import { apiGet, apiPost } from '../api/client'
+import { useLanguage } from '../context/LanguageContext'
+import { jobTypeLabel, jobStatusLabel } from '../i18n'
 
 interface Job {
   id: string
@@ -21,7 +23,9 @@ interface Props {
 
 export default function JobStatus({ jobType, siteId, onReady }: Props) {
   const [job, setJob] = useState<Job | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const intervalRef = useRef<number | undefined>(undefined)
+  const { t } = useLanguage()
 
   useEffect(() => {
     if (!siteId) { setJob(null); return }
@@ -63,9 +67,13 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
 
   async function cancel() {
     if (!job) return
-    await apiPost(`/api/v1/jobs/${job.id}`)
+    setCancelling(true)
+    try {
+      await apiPost(`/api/v1/jobs/${job.id}`)
+    } catch { /* ignore */ }
     setJob(null)
     if (intervalRef.current) clearInterval(intervalRef.current)
+    setCancelling(false)
   }
 
   if (!job) return null
@@ -76,16 +84,18 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
   return (
     <div className={`result-box ${job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'info'}`}>
       <div className="job-progress-header">
-        <span>{job.type} &bull; {job.status}</span>
+        <span>{jobTypeLabel(t, job.type)} &bull; {jobStatusLabel(t, job.status)}</span>
         <span>{pct}%</span>
       </div>
-      <div className="job-progress-detail">{job.progress || job.status}</div>
+      <div className="job-progress-detail">{job.progress || jobStatusLabel(t, job.status)}</div>
       <div className="job-progress-track">
         <div className="job-progress-fill" style={{ width: pct + '%' }} />
       </div>
       {isActive && (
         <div style={{ marginTop: 8 }}>
-          <button onClick={cancel} className="btn btn-danger btn-sm">Stop</button>
+          <button onClick={cancel} className="btn btn-danger btn-sm" disabled={cancelling}>
+            {cancelling && <span className="spinner" />}{t('btn_stop')}
+          </button>
         </div>
       )}
     </div>

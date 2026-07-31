@@ -48,5 +48,17 @@ export function setLanguage(lang: Language) {
   document.documentElement.lang = lang
 }
 
+export function jobTypeLabel(t: (k: string) => string, type: string): string {
+  const key = 'job_type_' + type
+  const label = t(key)
+  return label === key ? type : label
+}
+
+export function jobStatusLabel(t: (k: string) => string, status: string): string {
+  const key = 'job_status_' + status
+  const label = t(key)
+  return label === key ? status : label
+}
+
 export { SUPPORTED as LANGUAGE_OPTIONS }
 export type { Language as LanguageCode }

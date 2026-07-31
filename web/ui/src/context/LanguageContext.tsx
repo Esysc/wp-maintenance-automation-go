@@ -18,17 +18,23 @@ const LanguageContext = createContext<LanguageState | null>(null)
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Language>(getPreferredLanguage())
+  const [version, setVersion] = useState(0)
 
   useEffect(() => {
-    loadLocale(lang).then(() => setI18nLang(lang))
+    loadLocale(lang)
+      .then(() => setI18nLang(lang))
+      .then(() => setVersion(v => v + 1))
   }, [lang])
 
   const setLang = (next: Language) => {
-    setLangState(next)
     setI18nLang(next)
+    setLangState(next)
+    loadLocale(next).then(() => setVersion(v => v + 1))
   }
 
   const t = (key: string) => getTranslation(key, lang)
+
+  void version
 
   return (
     <LanguageContext.Provider value={{ lang, setLang, t }}>

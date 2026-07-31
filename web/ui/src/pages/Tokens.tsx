@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { apiGet, apiPost, apiDelete, type ApiResponse } from '../api/client'
+import Modal from '../components/Modal'
+import { apiGet, apiPost, apiDelete } from '../api/client'
 import { useToast } from '../context/ToastContext'
+import { useLanguage } from '../context/LanguageContext'
 
 interface Token {
   id: string
@@ -23,7 +25,10 @@ export default function Tokens() {
   const [createdToken, setCreatedToken] = useState('')
   const [revokeTarget, setRevokeTarget] = useState<string | null>(null)
   const [currentSessionId, setCurrentSessionId] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [revoking, setRevoking] = useState(false)
   const { toast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { load() }, [])
 
@@ -34,80 +39,98 @@ export default function Tokens() {
       setTokens(list)
       const cur = list.find(t => t.current_session)
       if (cur) setCurrentSessionId(cur.id || '')
+    } else if (res.error) {
+      toast(res.error, 'error')
     }
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    const res = await apiPost<{ token: string }>('/api/v1/tokens', {
-      name: tokenName,
-      duration: tokenDuration,
-    })
-    if (res.success && res.data) {
-      setCreatedToken(res.data.token || '')
-      setShowCreate(false)
-      load()
-    } else {
-      toast(res.error || 'Failed to create token', 'error')
+    setCreating(true)
+    try {
+      const res = await apiPost<{ token: string }>('/api/v1/tokens', {
+        name: tokenName,
+        duration: tokenDuration,
+      })
+      if (res.success && res.data) {
+        setCreatedToken(res.data.token || '')
+        setShowCreate(false)
+        load()
+      } else {
+        toast(res.error || t('error_create_token_failed'), 'error')
+      }
+    } catch (e: any) {
+      toast(e.message || t('error_create_token_failed'), 'error')
     }
+    setCreating(false)
   }
 
   async function revokeToken(id: string) {
-    const res = await apiDelete('/api/v1/tokens/' + id)
-    if (res.success) {
-      toast('Token revoked', 'success')
-      if (currentSessionId && id === currentSessionId) {
-        document.cookie = 'token=; Max-Age=0; path=/'
-        window.location.href = '/login'
-        return
+    setRevoking(true)
+    try {
+      const res = await apiDelete('/api/v1/tokens/' + id)
+      if (res.success) {
+        toast(t('token_revoked'), 'success')
+        if (currentSessionId && id === currentSessionId) {
+          document.cookie = 'token=; Max-Age=0; path=/'
+          window.location.href = '/login'
+          return
+        }
+        load()
+      } else {
+        toast(res.error || t('token_failed_revoke'), 'error')
       }
-      load()
-    } else {
-      toast(res.error || 'Failed to revoke', 'error')
+    } catch (e: any) {
+      toast(e.message || t('token_failed_revoke'), 'error')
     }
+    setRevoking(false)
+    setRevokeTarget(null)
   }
 
   async function copyId(id: string) {
     try {
       await navigator.clipboard.writeText(id)
-      toast('Token ID copied', 'success')
-    } catch { toast('Unable to copy', 'error') }
+      toast(t('token_id_copied'), 'success')
+    } catch { toast(t('error_copy'), 'error') }
   }
 
   async function copyCreatedTokenValue() {
     try {
       await navigator.clipboard.writeText(createdToken)
-      toast('Token copied to clipboard', 'success')
-    } catch { toast('Unable to copy', 'error') }
+      toast(t('token_copied'), 'success')
+    } catch { toast(t('token_copy_failed'), 'error') }
   }
 
   return (
     <>
       <header className="page-header">
-        <h1>API Tokens</h1>
-        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>Create Token</button>
+        <h1>{t('page_title_tokens')}</h1>
+        <button className="btn btn-primary" onClick={() => setShowCreate(true)}>{t('btn_create_token')}</button>
       </header>
 
       <div className="card">
         <div className="list-grid">
-          {tokens.length === 0 && (
+          {tokens.filter(tk => !tk.revoked).length === 0 && (
             <article className="entity-card">
-              <div className="entity-title">No active tokens</div>
-              <div className="entity-meta">Create a token to enable external API access.</div>
+              <div className="entity-title">{t('token_no_active')}</div>
+              <div className="entity-meta">{t('token_create_external_access')}</div>
             </article>
           )}
-          {tokens.filter(t => !t.revoked).map(t => {
-            const expires = t.expires_at ? new Date(t.expires_at).toLocaleString() : 'No expiry'
+          {tokens.filter(tk => !tk.revoked).map(tk => {
+            const expires = tk.expires_at ? new Date(tk.expires_at).toLocaleString() : t('token_no_expiry')
             return (
-              <article key={t.id} className="entity-card">
-                <div className="entity-title">{t.name || 'Unnamed Token'}</div>
-                <div className="entity-meta">Owner: {t.owner_display_name || t.owner_name || 'internal'}</div>
-                <div className="entity-meta">Created: {t.created_at ? new Date(t.created_at).toLocaleString() : '-'}</div>
-                <div className="entity-meta">Expires: {expires} {t.expires_at ? <span className="badge badge-muted">Expiring</span> : <span className="badge badge-success">No expiry</span>}</div>
+              <article key={tk.id} className="entity-card">
+                <div className="entity-title">{tk.name || t('token_unnamed')}</div>
+                <div className="entity-meta">{t('token_owner')}: {tk.owner_display_name || tk.owner_name || 'internal'}</div>
+                <div className="entity-meta">{t('label_created')}: {tk.created_at ? new Date(tk.created_at).toLocaleString() : '-'}</div>
+                <div className="entity-meta">
+                  {t('token_expires')}: {expires}
+                  {tk.expires_at ? <span className="badge badge-muted">{t('token_expiring')}</span> : <span className="badge badge-success">{t('token_no_expiry')}</span>}
+                </div>
                 <div className="entity-actions">
-                  <button onClick={() => copyId(t.id)} className="btn btn-sm">Copy ID</button>
-                  {!t.current_session && (
-                    <button onClick={() => setRevokeTarget(t.id)} className="btn btn-danger btn-sm">Revoke</button>
+                  <button onClick={() => copyId(tk.id)} className="btn btn-sm">{t('btn_copy_id')}</button>
+                  {!tk.current_session && (
+                    <button onClick={() => setRevokeTarget(tk.id)} className="btn btn-danger btn-sm">{t('btn_revoke')}</button>
                   )}
                 </div>
               </article>
@@ -117,62 +140,61 @@ export default function Tokens() {
       </div>
 
       {showCreate && (
-        <div className="modal show" style={{ display: 'block' }}>
-          <button className="modal-backdrop" onClick={() => setShowCreate(false)} />
-          <div className="modal-dialog modal-sm">
-            <div className="modal-header">
-              <h3>Create Token</h3>
-              <button type="button" className="icon-btn" onClick={() => setShowCreate(false)}>x</button>
-            </div>
+        <Modal
+          open
+          title={t('modal_create_token')}
+          onClose={() => setShowCreate(false)}
+          size="sm"
+        >
+          <form onSubmit={handleCreate}>
             <div className="modal-body">
-              <form onSubmit={handleCreate}>
-                <div className="field-floating">
-                  <input type="text" value={tokenName} onChange={e => setTokenName(e.target.value)} placeholder=" " required />
-                  <label>Token Name</label>
-                </div>
-                <div className="field-floating">
-                  <input type="number" value={tokenDuration} onChange={e => setTokenDuration(parseInt(e.target.value) || 0)} placeholder=" " />
-                  <label>Duration (hours, 0 = no expiry)</label>
-                </div>
-                <div className="modal-actions">
-                  <button type="button" className="btn" onClick={() => setShowCreate(false)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary">Create Token</button>
-                </div>
-              </form>
+              <div className="field-floating">
+                <input type="text" id="tokenName" value={tokenName} onChange={e => setTokenName(e.target.value)} placeholder=" " required />
+                <label htmlFor="tokenName">{t('form_token_name')}</label>
+              </div>
+              <div className="field-floating">
+                <input type="number" id="tokenDuration" value={tokenDuration} onChange={e => setTokenDuration(parseInt(e.target.value) || 0)} placeholder=" " />
+                <label htmlFor="tokenDuration">{t('form_token_duration')}</label>
+              </div>
             </div>
-          </div>
-        </div>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setShowCreate(false)} disabled={creating}>{t('btn_cancel')}</button>
+              <button type="submit" className="btn btn-primary" disabled={creating}>
+                {creating && <span className="spinner" />}{t('btn_create_token')}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       {createdToken && (
-        <div className="modal show" style={{ display: 'block' }}>
-          <button className="modal-backdrop" onClick={() => setCreatedToken('')} />
-          <div className="modal-dialog modal-sm">
-            <div className="modal-header">
-              <h3>Token Created</h3>
-              <button type="button" className="icon-btn" onClick={() => setCreatedToken('')}>x</button>
-            </div>
-            <div className="modal-body">
-              <p>Copy the token now. It will not be shown again.</p>
-              <div className="field-floating">
-                <input type="text" value={createdToken} readOnly placeholder=" " />
-                <label>Token Value</label>
-              </div>
-              <div className="modal-actions">
-                <button type="button" className="btn" onClick={copyCreatedTokenValue}>Copy Token</button>
-                <button type="button" className="btn btn-primary" onClick={() => setCreatedToken('')}>Close</button>
-              </div>
+        <Modal
+          open
+          title={t('token_created_title')}
+          onClose={() => setCreatedToken('')}
+          size="sm"
+        >
+          <div className="modal-body">
+            <p>{t('token_created')}</p>
+            <div className="field-floating">
+              <input type="text" id="createdTokenValue" value={createdToken} readOnly placeholder=" " />
+              <label htmlFor="createdTokenValue">{t('token_value')}</label>
             </div>
           </div>
-        </div>
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={copyCreatedTokenValue}>{t('btn_copy_token')}</button>
+            <button type="button" className="btn btn-primary" onClick={() => setCreatedToken('')}>{t('btn_close')}</button>
+          </div>
+        </Modal>
       )}
 
       <ConfirmDialog
         open={revokeTarget !== null}
-        title="Revoke Token"
-        message="Revoke this token?"
-        onConfirm={() => { if (revokeTarget) revokeToken(revokeTarget); setRevokeTarget(null) }}
+        title={t('modal_revoke_token')}
+        message={t('modal_revoke_confirmation')}
+        onConfirm={() => { if (revokeTarget) revokeToken(revokeTarget) }}
         onCancel={() => setRevokeTarget(null)}
+        busy={revoking}
       />
     </>
   )

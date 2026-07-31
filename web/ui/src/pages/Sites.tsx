@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { apiGet, apiPost, apiPut, apiDelete, type ApiResponse } from '../api/client'
+import Modal from '../components/Modal'
+import { apiGet, apiPost, apiPut, apiDelete } from '../api/client'
 import { useToast } from '../context/ToastContext'
+import { useSite } from '../context/SiteContext'
+import { useLanguage } from '../context/LanguageContext'
 
 interface Site {
   id: string
@@ -33,8 +36,13 @@ const emptyForm = (): Partial<Site> => ({
 export default function Sites() {
   const [sites, setSites] = useState<Site[]>([])
   const [editing, setEditing] = useState<{ id?: string; data: Partial<Site> } | null>(null)
-  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [detecting, setDetecting] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const { toast } = useToast()
+  const { reload: reloadSites } = useSite()
+  const { t } = useLanguage()
 
   useEffect(() => { load() }, [])
 
@@ -42,29 +50,37 @@ export default function Sites() {
     const res = await apiGet<Site[]>('/api/v1/sites')
     if (res.success && res.data) {
       setSites(Array.isArray(res.data) ? res.data : [])
+    } else if (res.error) {
+      toast(res.error, 'error')
     }
   }
 
   async function detectConfig() {
     if (!editing) return
     const { wp_ssh_host, wp_ssh_port, wp_ssh_user, wp_ssh_key, wp_root } = editing.data
-    if (!wp_ssh_host || !wp_ssh_user) { toast('SSH Host and User are required', 'error'); return }
-    const res = await apiPost<{ wp_root: string; db_host: string; db_user: string; db_password: string; db_name: string }>(
-      '/api/v1/sites/detect-config',
-      { ssh_host: wp_ssh_host, ssh_port: wp_ssh_port || 22, ssh_user: wp_ssh_user, ssh_key: wp_ssh_key || '', wp_root },
-    )
-    if (res.success && res.data) {
-      setEditing(prev => ({
-        ...prev!,
-        data: {
-          ...prev!.data,
-          ...res.data!,
-        }
-      }))
-      toast('Configuration detected', 'success')
-    } else {
-      toast(res.error || 'Detection failed', 'error')
+    if (!wp_ssh_host || !wp_ssh_user) { toast(t('error_ssh_host_user_required'), 'error'); return }
+    setDetecting(true)
+    try {
+      const res = await apiPost<{ wp_root: string; db_host: string; db_user: string; db_password: string; db_name: string }>(
+        '/api/v1/sites/detect-config',
+        { ssh_host: wp_ssh_host, ssh_port: wp_ssh_port || 22, ssh_user: wp_ssh_user, ssh_key: wp_ssh_key || '', wp_root },
+      )
+      if (res.success && res.data) {
+        setEditing(prev => ({
+          ...prev!,
+          data: {
+            ...prev!.data,
+            ...res.data!,
+          }
+        }))
+        toast(t('config_detected_success'), 'success')
+      } else {
+        toast(res.error || t('config_detection_failed'), 'error')
+      }
+    } catch (e: any) {
+      toast(e.message || t('config_detection_failed'), 'error')
     }
+    setDetecting(false)
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -72,42 +88,60 @@ export default function Sites() {
     if (!editing) return
     const { id, data } = editing
     const payload = { ...data }
-    if (data.restic_repository === 'local:/app/backup_artifacts/restic-repo') {
-      // keep as-is
-    }
-    if (id) {
-      const res = await apiPut(`/api/v1/sites/${id}`, payload)
-      if (res.success) {
-        toast('Site updated', 'success')
-        setEditing(null)
-        load()
+    setSaving(true)
+    try {
+      if (id) {
+        const res = await apiPut(`/api/v1/sites/${id}`, payload)
+        if (res.success) {
+          toast(t('site_updated_successfully'), 'success')
+          setEditing(null)
+          load()
+          reloadSites()
+        } else {
+          toast(res.error || t('site_failed_save'), 'error')
+        }
       } else {
-        toast(res.error || 'Save failed', 'error')
+        const res = await apiPost('/api/v1/sites', payload)
+        if (res.success) {
+          toast(t('site_created_successfully'), 'success')
+          setEditing(null)
+          load()
+          reloadSites()
+        } else {
+          toast(res.error || t('site_failed_save'), 'error')
+        }
       }
-    } else {
-      const res = await apiPost('/api/v1/sites', payload)
-      if (res.success) {
-        toast('Site created', 'success')
-        setEditing(null)
-        load()
-      } else {
-        toast(res.error || 'Save failed', 'error')
-      }
+    } catch (e: any) {
+      toast(e.message || t('site_failed_save'), 'error')
     }
+    setSaving(false)
   }
 
   async function deleteSite(id: string) {
-    await apiDelete('/api/v1/sites/' + id)
-    toast('Site deleted', 'success')
+    setDeleteBusy(true)
+    try {
+      const res = await apiDelete('/api/v1/sites/' + id)
+      if (res.success) {
+        toast(t('site_deleted'), 'success')
+      } else {
+        toast(res.error || t('site_failed_delete'), 'error')
+      }
+    } catch (e: any) {
+      toast(e.message || t('site_failed_delete'), 'error')
+    }
+    setDeleteBusy(false)
+    setDeleteTarget(null)
     load()
+    reloadSites()
   }
 
   function field(key: keyof Site, label: string, opts?: { readonly?: boolean; type?: string; placeholder?: string }) {
     if (!editing) return null
     const val = editing.data[key] ?? ''
+    const id = 'f_' + key
     return (
       <div className="field-floating">
-        <input type={opts?.type || 'text'} id={'f_' + key} placeholder=" "
+        <input id={id} type={opts?.type || 'text'} placeholder=" "
           readOnly={opts?.readonly}
           value={typeof val === 'boolean' ? (val ? '1' : '0') : String(val)}
           onChange={e => setEditing(prev => ({
@@ -115,7 +149,7 @@ export default function Sites() {
             data: { ...prev!.data, [key]: e.target.type === 'number' ? parseInt(e.target.value) || 0 : e.target.value }
           }))}
           required={!opts?.readonly} />
-        <label>{label}</label>
+        <label htmlFor={id}>{label}</label>
       </div>
     )
   }
@@ -123,27 +157,27 @@ export default function Sites() {
   return (
     <>
       <header className="page-header">
-        <h1>Sites</h1>
-        <button className="btn btn-primary" onClick={() => setEditing({ data: emptyForm() })}>Add Site</button>
+        <h1>{t('page_title_sites')}</h1>
+        <button className="btn btn-primary" onClick={() => setEditing({ data: emptyForm() })}>{t('btn_add_site')}</button>
       </header>
 
       <div className="card">
         <div className="list-grid">
-          {sites.length === 0 && <p>No sites configured yet.</p>}
+          {sites.length === 0 && <p>{t('no_sites_configured')}</p>}
           {sites.map(s => (
             <article key={s.id} className="entity-card">
               <div className="entity-title">{s.name || '-'}</div>
-              <div className="entity-meta">Host: {s.wp_ssh_host || '-'}</div>
-              <div className="entity-meta">SSH User: {s.wp_ssh_user || '-'}</div>
-              <div className="entity-meta">WP Root: <code>{s.wp_root || '-'}</code></div>
+              <div className="entity-meta">{t('site_label_host')}: {s.wp_ssh_host || '-'}</div>
+              <div className="entity-meta">{t('site_label_ssh_user')}: {s.wp_ssh_user || '-'}</div>
+              <div className="entity-meta">{t('site_label_wp_root')}: <code>{s.wp_root || '-'}</code></div>
               <div className="entity-meta">
                 <span className={`badge ${s.staging_enabled ? 'badge-success' : 'badge-muted'}`}>
-                  {s.staging_enabled ? 'Staging enabled' : 'Production only'}
+                  {s.staging_enabled ? t('site_staging_enabled_badge') : t('site_production_only_badge')}
                 </span>
               </div>
               <div className="entity-actions">
-                <button onClick={() => setEditing({ id: s.id, data: s })} className="btn btn-sm">Edit</button>
-                <button onClick={() => setDeleteTarget(s.id)} className="btn btn-danger btn-sm">Delete</button>
+                <button onClick={() => setEditing({ id: s.id, data: s })} className="btn btn-sm">{t('btn_edit')}</button>
+                <button onClick={() => setDeleteTarget({ id: s.id, name: s.name || s.id })} className="btn btn-danger btn-sm">{t('btn_delete')}</button>
               </div>
             </article>
           ))}
@@ -151,64 +185,67 @@ export default function Sites() {
       </div>
 
       {editing && (
-        <div className="modal show" style={{ display: 'block' }}>
-          <button className="modal-backdrop" onClick={() => setEditing(null)} />
-          <div className="modal-dialog">
-            <div className="modal-header">
-              <h3>{editing.id ? 'Edit Site' : 'Create Site'}</h3>
-              <button type="button" className="icon-btn" onClick={() => setEditing(null)}>x</button>
-            </div>
+        <Modal
+          open
+          title={editing.id ? t('modal_edit_site') : t('modal_create_site')}
+          onClose={() => setEditing(null)}
+        >
+          <form onSubmit={handleSave}>
             <div className="modal-body">
-              <form onSubmit={handleSave}>
-                {field('name', 'Site Name')}
-                {field('wp_ssh_host', 'SSH Host')}
-                {field('wp_ssh_port', 'SSH Port', { type: 'number' })}
-                {field('wp_ssh_user', 'SSH User')}
-                {field('wp_ssh_key', 'SSH Private Key (optional)')}
-                {field('wp_root', 'WordPress Root')}
-                <button type="button" className="btn btn-sm btn-secondary" onClick={detectConfig} style={{ marginBottom: 16 }}>
-                  Detect Configuration via SSH
+              {field('name', t('form_site_name'))}
+              {field('wp_ssh_host', t('form_ssh_host'))}
+              {field('wp_ssh_port', t('form_ssh_port'), { type: 'number' })}
+              {field('wp_ssh_user', t('form_ssh_user'))}
+              {field('wp_ssh_key', t('form_ssh_key'))}
+              {field('wp_root', t('form_wp_root'))}
+              <div className="form-group">
+                <button type="button" className="btn btn-sm btn-secondary" onClick={detectConfig} disabled={detecting}>
+                  {detecting && <span className="spinner" />}
+                  {t('btn_detect_config')}
                 </button>
-                {field('db_host', 'Database Host', { readonly: true })}
-                {field('db_user', 'Database User', { readonly: true })}
-                {field('db_password', 'Database Password', { readonly: true, type: 'password' })}
-                {field('db_name', 'Database Name', { readonly: true })}
-                {field('restic_repository', 'Restic Repository')}
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0 12px', fontSize: '0.9em' }}>
-                  <input type="checkbox" checked={editing.data.restic_repository === 'local:/app/backup_artifacts/restic-repo'}
-                    onChange={e => setEditing(prev => ({
-                      ...prev!,
-                      data: { ...prev!.data, restic_repository: e.target.checked ? 'local:/app/backup_artifacts/restic-repo' : '' }
-                    }))} />
-                  <span>Use local storage (/app/backup_artifacts/restic-repo)</span>
-                </label>
-                {field('backup_dir', 'Backup Directory')}
-                {field('retention_flags', 'Retention Flags')}
-                {field('healthcheck_url', 'Healthcheck URL')}
-                <div className="field-floating">
-                  <select value={editing.data.staging_enabled ? '1' : '0'}
-                    onChange={e => setEditing(prev => ({ ...prev!, data: { ...prev!.data, staging_enabled: e.target.value === '1' } }))}>
-                    <option value="0">No</option>
-                    <option value="1">Yes</option>
-                  </select>
-                  <label>Staging Enabled</label>
-                </div>
-                <div className="modal-actions">
-                  <button type="button" className="btn" onClick={() => setEditing(null)}>Cancel</button>
-                  <button type="submit" className="btn btn-primary">{editing.id ? 'Save Changes' : 'Create Site'}</button>
-                </div>
-              </form>
+              </div>
+              {field('db_host', t('form_db_host'), { readonly: true })}
+              {field('db_user', t('form_db_user'), { readonly: true })}
+              {field('db_password', t('form_db_password'), { readonly: true, type: 'password' })}
+              {field('db_name', t('form_db_name'), { readonly: true })}
+              {field('restic_repository', t('form_restic_repo'))}
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, margin: '4px 0 12px', fontSize: '0.9em' }}>
+                <input type="checkbox" checked={editing.data.restic_repository === 'local:/app/backup_artifacts/restic-repo'}
+                  onChange={e => setEditing(prev => ({
+                    ...prev!,
+                    data: { ...prev!.data, restic_repository: e.target.checked ? 'local:/app/backup_artifacts/restic-repo' : '' }
+                  }))} />
+                <span>{t('form_local_restic')}</span>
+              </label>
+              {field('backup_dir', t('form_backup_dir'))}
+              {field('retention_flags', t('form_retention_flags'))}
+              {field('healthcheck_url', t('form_healthcheck_url'))}
+              <div className="field-floating">
+                <select id="f_staging_enabled" value={editing.data.staging_enabled ? '1' : '0'}
+                  onChange={e => setEditing(prev => ({ ...prev!, data: { ...prev!.data, staging_enabled: e.target.value === '1' } }))}>
+                  <option value="0">{t('option_no')}</option>
+                  <option value="1">{t('option_yes')}</option>
+                </select>
+                <label htmlFor="f_staging_enabled">{t('form_staging_enabled')}</label>
+              </div>
             </div>
-          </div>
-        </div>
+            <div className="modal-actions">
+              <button type="button" className="btn" onClick={() => setEditing(null)} disabled={saving}>{t('btn_cancel')}</button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving && <span className="spinner" />}{editing.id ? t('btn_save_changes') : t('btn_create_site')}
+              </button>
+            </div>
+          </form>
+        </Modal>
       )}
 
       <ConfirmDialog
         open={deleteTarget !== null}
-        title="Delete Site"
-        message="Delete this site?"
-        onConfirm={() => { if (deleteTarget) deleteSite(deleteTarget); setDeleteTarget(null) }}
+        title={t('modal_delete_site')}
+        message={deleteTarget ? t('modal_delete_confirmation') + ' (' + deleteTarget.name + ')' : ''}
+        onConfirm={() => { if (deleteTarget) deleteSite(deleteTarget.id) }}
         onCancel={() => setDeleteTarget(null)}
+        busy={deleteBusy}
       />
     </>
   )

@@ -35,6 +35,7 @@ services:
       - SSH_AUTH_SOCK=/ssh-agent.sock
       - RESTIC_PASSWORD_FILE=/app/data/restic_password
       - RESTIC_PASSWORD=${RESTIC_PASSWORD}
+      - HOST_AGENT_URL=${HOST_AGENT_URL:-}
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs

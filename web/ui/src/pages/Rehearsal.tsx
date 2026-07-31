@@ -1,8 +1,12 @@
 import { useState, useEffect } from 'react'
 import SiteSelector from '../components/SiteSelector'
 import JobStatus from '../components/JobStatus'
-import { apiGet, apiPost, type ApiResponse } from '../api/client'
+import ConfirmDialog from '../components/ConfirmDialog'
+import SiteHint from '../components/SiteHint'
+import { apiGet, apiPost } from '../api/client'
 import { useToast } from '../context/ToastContext'
+import { useSite } from '../context/SiteContext'
+import { useLanguage } from '../context/LanguageContext'
 
 interface RehearsalEnv {
   health_url: string
@@ -25,13 +29,16 @@ interface ResticSnapshot {
 }
 
 export default function Rehearsal() {
-  const [siteId, setSiteId] = useState('')
+  const { siteId, setSiteId } = useSite()
   const [snapshots, setSnapshots] = useState<ResticSnapshot[]>([])
   const [selectedSnapshot, setSelectedSnapshot] = useState('')
   const [env, setEnv] = useState<RehearsalEnv | null>(null)
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
+  const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [confirmStop, setConfirmStop] = useState(false)
   const { toast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => {
     if (siteId) { loadSnapshots(); checkRunningRehearsal() }
@@ -43,6 +50,8 @@ export default function Rehearsal() {
     if (res.success && res.data) {
       const all = Array.isArray(res.data) ? res.data : []
       setSnapshots(all.filter(s => s.tags?.includes(siteId)))
+    } else if (res.error) {
+      toast(res.error, 'error')
     }
   }
 
@@ -63,17 +72,23 @@ export default function Rehearsal() {
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault()
-    if (!siteId || !selectedSnapshot) { toast('Please select a snapshot', 'error'); return }
-    const res = await apiPost<{ job_id: string }>('/api/v1/rehearsal', {
-      site_id: siteId,
-      snapshot_id: selectedSnapshot,
-    })
-    if (res.success && res.data) {
-      toast('Rehearsal queued', 'info')
-      setActiveJobId(res.data.job_id)
-    } else {
-      toast(res.error || 'Rehearsal failed', 'error')
+    if (!siteId || !selectedSnapshot) { toast(t('error_snapshot_required'), 'error'); return }
+    setStarting(true)
+    try {
+      const res = await apiPost<{ job_id: string }>('/api/v1/rehearsal', {
+        site_id: siteId,
+        snapshot_id: selectedSnapshot,
+      })
+      if (res.success && res.data) {
+        toast(t('rehearsal_queued'), 'info')
+        setActiveJobId(res.data.job_id)
+      } else {
+        toast(res.error || t('rehearsal_failed'), 'error')
+      }
+    } catch (e: any) {
+      toast(e.message || t('rehearsal_failed'), 'error')
     }
+    setStarting(false)
   }
 
   async function handleStop() {
@@ -82,16 +97,17 @@ export default function Rehearsal() {
     try {
       const res = await apiPost('/api/v1/rehearsal/' + activeJobId + '/stop')
       if (res.success) {
-        toast('Rehearsal stopped', 'success')
+        toast(t('rehearsal_stopped'), 'success')
         setEnv(null)
         setActiveJobId(null)
       } else {
-        toast(res.error || 'Failed to stop', 'error')
+        toast(res.error || t('rehearsal_stop_failed'), 'error')
       }
     } catch (e: any) {
-      toast(e.message || 'Failed to stop', 'error')
+      toast(e.message || t('rehearsal_stop_failed'), 'error')
     }
     setStopping(false)
+    setConfirmStop(false)
   }
 
   function onRehearsalReady(jobId: string) {
@@ -109,21 +125,25 @@ export default function Rehearsal() {
   return (
     <>
       <header className="page-header">
-        <h1>Staging Rehearsal</h1>
+        <h1>{t('page_title_rehearsal')}</h1>
         <div className="header-actions">
           <SiteSelector value={siteId} onChange={setSiteId} />
         </div>
       </header>
 
+      {!siteId && (
+        <SiteHint />
+      )}
+
       {siteId && (
         <div className="card">
-          <h3>Start a Rehearsal</h3>
-          <p>Restore a backup snapshot into an isolated Docker environment to test upgrades and verify site health before applying to production.</p>
+          <h3>{t('rehearsal_start_title')}</h3>
+          <p>{t('rehearsal_start_desc')}</p>
           <form onSubmit={handleStart}>
             <div className="form-group">
-              <label>Snapshot</label>
+              <label>{t('rehearsal_snapshot_label')}</label>
               <select value={selectedSnapshot} onChange={e => setSelectedSnapshot(e.target.value)} required>
-                <option value="" disabled>Select a snapshot...</option>
+                <option value="" disabled>{t('rehearsal_select_snapshot')}</option>
                 {snapshots.map(s => (
                   <option key={s.short_id || s.id} value={s.short_id || s.id}>
                     {(s.short_id || s.id).substring(0, 16)} &mdash; {s.time || ''}
@@ -132,7 +152,9 @@ export default function Rehearsal() {
               </select>
             </div>
             <div className="form-group">
-              <button type="submit" className="btn btn-primary">Start Rehearsal</button>
+              <button type="submit" className="btn btn-primary" disabled={starting}>
+                {starting && <span className="spinner" />}{t('btn_start_rehearsal')}
+              </button>
             </div>
           </form>
         </div>
@@ -142,17 +164,28 @@ export default function Rehearsal() {
 
       {env && (
         <div className="card" style={{ marginTop: 16 }}>
-          <h3>Active Rehearsal</h3>
-          <p><strong>Staging URL:</strong> <a href={env.health_url} target="_blank" rel="noopener">{env.health_url}</a></p>
-          <p><strong>WordPress Version:</strong> {env.wp_version || '-'}</p>
-          <p><strong>Database:</strong> {env.db_name || '-'}</p>
-          <p><strong>Snapshot:</strong> {env.snapshot_id || '-'}</p>
-          {stopping && <div className="result-box info"><span className="spinner" /> Stopping rehearsal...</div>}
+          <h3>{t('rehearsal_running_title')}</h3>
+          <p><strong>{t('rehearsal_health_url')}:</strong> <a href={env.health_url} target="_blank" rel="noopener">{env.health_url}</a></p>
+          <p><strong>{t('rehearsal_wp_version')}:</strong> {env.wp_version || '-'}</p>
+          <p><strong>{t('rehearsal_db_name')}:</strong> {env.db_name || '-'}</p>
+          <p><strong>{t('rehearsal_snapshot_label')}:</strong> {env.snapshot_id || '-'}</p>
+          {stopping && <div className="result-box info"><span className="spinner" /> {t('rehearsal_stopping')}</div>}
           <div className="form-group" style={{ marginTop: 16 }}>
-            <button onClick={handleStop} className="btn btn-danger" disabled={stopping}>Stop Rehearsal</button>
+            <button onClick={() => setConfirmStop(true)} className="btn btn-danger" disabled={stopping}>
+              {stopping && <span className="spinner" />}{t('btn_stop_rehearsal')}
+            </button>
           </div>
         </div>
       )}
+
+      <ConfirmDialog
+        open={confirmStop}
+        title={t('rehearsal_stop_title')}
+        message={t('rehearsal_stop_confirm')}
+        onConfirm={handleStop}
+        onCancel={() => setConfirmStop(false)}
+        busy={stopping}
+      />
     </>
   )
 }

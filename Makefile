@@ -4,10 +4,11 @@ BINARY_CLI = bin/wp-maintenance
 BINARY_API = bin/wp-maintenance-api
 BINARY_WEB = bin/wp-maintenance-web
 BINARY_SERVER = bin/wp-maintenance-server
+BINARY_HOST_AGENT = bin/host-agent
 
 all: build
 
-build: build-cli build-api build-web build-server
+build: build-cli build-api build-web build-server build-host-agent
 
 build-cli:
 	@echo "Building CLI..."
@@ -28,6 +29,11 @@ build-server:
 	@echo "Building combined server..."
 	@mkdir -p bin
 	go build -o $(BINARY_SERVER) ./cmd/server/
+
+build-host-agent:
+	@echo "Building host agent (builds for the current OS; use GOOS=linux for a Linux host)..."
+	@mkdir -p bin
+	go build -o $(BINARY_HOST_AGENT) ./cmd/host-agent/
 
 test:
 	@echo "Running tests..."
@@ -85,6 +91,7 @@ install:
 	go install ./cmd/api/
 	go install ./cmd/web/
 	go install ./cmd/server/
+	go install ./cmd/host-agent/
 
 help:
 	@echo "WP Maintenance Automation Go"

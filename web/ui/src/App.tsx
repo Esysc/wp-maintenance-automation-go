@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
-import { LanguageProvider } from './context/LanguageContext'
+import { LanguageProvider, useLanguage } from './context/LanguageContext'
+import { SiteProvider } from './context/SiteContext'
 import { loadLocale, getPreferredLanguage } from './i18n'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -17,11 +18,19 @@ import Sites from './pages/Sites'
 import Users from './pages/Users'
 import Tokens from './pages/Tokens'
 import System from './pages/System'
+import LoadingState from './components/LoadingState'
 import type { ReactNode } from 'react'
 
 function AuthGuard({ children }: { children: ReactNode }) {
   const { authenticated, loading } = useAuth()
-  if (loading) return <div className="main-content" style={{ marginLeft: 0, width: '100%' }}><p>Loading...</p></div>
+  const { t } = useLanguage()
+  if (loading) {
+    return (
+      <div className="main-content" style={{ marginLeft: 0, width: '100%' }}>
+        <LoadingState text={t('loading')} />
+      </div>
+    )
+  }
   if (!authenticated) return <Navigate to="/login" replace />
   return <Layout>{children}</Layout>
 }
@@ -33,13 +42,20 @@ function App() {
     loadLocale(getPreferredLanguage()).then(() => setLocaleReady(true))
   }, [])
 
-  if (!localeReady) return null
+  if (!localeReady) {
+    return (
+      <div className="login-container">
+        <LoadingState text="Loading..." />
+      </div>
+    )
+  }
 
   return (
     <BrowserRouter>
       <LanguageProvider>
         <ToastProvider>
           <AuthProvider>
+            <SiteProvider>
             <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/dashboard" element={<AuthGuard><Dashboard /></AuthGuard>} />
@@ -56,6 +72,7 @@ function App() {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
+            </SiteProvider>
           </AuthProvider>
         </ToastProvider>
       </LanguageProvider>

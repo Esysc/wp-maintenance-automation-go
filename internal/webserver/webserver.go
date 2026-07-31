@@ -95,6 +95,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
+	mux.HandleFunc("/api/v1/metrics", s.authMiddleware(s.handleAPIMetrics))
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
@@ -411,6 +412,10 @@ func (s *WebServer) handleAPIStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPIHealth(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/health")
+}
+
+func (s *WebServer) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/metrics")
 }
 
 func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {

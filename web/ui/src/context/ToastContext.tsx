@@ -30,12 +30,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ toasts, toast }}>
       {children}
-      <div className="toast-stack">
+      <div className="toast-stack" role="status" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} className={`toast toast-${t.type} show`}>
             <div className="toast-head">
               <span className="toast-icon" aria-hidden="true">
-                {t.type === 'success' ? 'ok' : t.type === 'error' ? '!' : 'i'}
+                {t.type === 'success' ? 'ok' : '!'}
               </span>
               <span className="toast-message">{t.message}</span>
               <button type="button" className="toast-close" onClick={() => setToasts(prev => prev.filter(x => x.id !== t.id))}>x</button>

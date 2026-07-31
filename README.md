@@ -19,6 +19,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 ## Features
 
 ### Core Functionality
+
 - SSH-based remote operations
 - Database dump and file synchronization
 - Encrypted backup storage with retention policies
@@ -27,6 +28,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - One-click rollback capabilities
 
 ### API Endpoints
+
 - `POST /api/v1/auth/login` - Authenticate and get a token
 - `GET /api/v1/auth/state` - Check authentication state
 - `POST /api/v1/auth/change-password` - Change password (auth required)
@@ -57,6 +59,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - `GET /api/v1/metrics` - Host + container metrics
 
 ### Web Interface
+
 - Dashboard for monitoring backup status
 - Real-time status updates
 - System status panel (`/system`) with status + health summaries and raw API details
@@ -65,6 +68,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 ## Getting Started
 
 ### Prerequisites
+
 - Go 1.25 or higher
 - Docker and Docker Compose (required for deployment and staging rehearsal)
 - SSH access to WordPress servers
@@ -79,6 +83,7 @@ docker compose up -d
 ```
 
 This starts four services:
+
 - **Caddy** (port 80/443) - Reverse proxy with automatic HTTPS
 - **API** (port 8081) - REST API server
 - **Web** (port 8080) - Web UI server
@@ -96,22 +101,26 @@ docker compose --profile backup up -d # restic REST server
 ### Local Development
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/yourusername/wp-maintenance-automation-go.git
 cd wp-maintenance-automation-go
 ```
 
 2. Install dependencies:
+
 ```bash
 go mod download
 ```
 
 3. Build the application:
+
 ```bash
 make build
 ```
 
 Or build individually:
+
 ```bash
 make build-api         # builds bin/wp-maintenance-api
 make build-web         # builds bin/wp-maintenance-web
@@ -121,6 +130,7 @@ make build-host-agent  # builds bin/host-agent
 ```
 
 4. Configure environment:
+
 ```bash
 cp .env.example .env
 # Edit .env with your settings
@@ -135,16 +145,19 @@ make dev
 Or run individually:
 
 API server (default port 8081):
+
 ```bash
 ./bin/wp-maintenance-api
 ```
 
 Web UI (default port 8080, proxies to API):
+
 ```bash
 ./bin/wp-maintenance-web
 ```
 
 CLI client:
+
 ```bash
 ./bin/wp-maintenance help
 ```
@@ -165,6 +178,7 @@ make clean      # Clean build artifacts
 Key environment variables (see `.env.example`):
 
 | Variable | Default | Description |
+
 |----------|---------|-------------|
 | `API_PORT` | `8081` | API server port |
 | `PORT` | `8081` | Alias for `API_PORT` |
@@ -195,6 +209,7 @@ Key environment variables (see `.env.example`):
 The `RESTIC_REPOSITORY` value (global or per-site) uses a URI scheme to select the backend:
 
 | Backend | Example |
+
 |---|---|
 | Local | `local:/data/backups` or `/data/backups` |
 | S3 / S3-compatible | `s3:https://s3.amazonaws.com/my-bucket` |
@@ -285,11 +300,13 @@ go run ./cmd/cli reset-password
 ```
 
 ### Database Location and Git Ignore
+
 - Runtime DB file: `data/wp-maintenance.db` (host filesystem)
 - In Docker Compose, host `./data` is mounted into `/app/data`
 - `data/` is ignored by git in `.gitignore`
 
 ### Encryption at Rest
+
 - User passwords are stored as bcrypt hashes in `users.password_hash`
 - Sensitive site fields are encrypted at rest using AES-GCM with prefix `enc:v1:`:
   - `sites.db_password`
@@ -309,6 +326,7 @@ All API responses use a uniform envelope: `{"success": true, "data": <payload>}`
 ### Example Usage
 
 Login and get a 24-hour token:
+
 ```bash
 curl -sX POST https://localhost/api/v1/auth/login \
   -H "Content-Type: application/json" \
@@ -316,18 +334,21 @@ curl -sX POST https://localhost/api/v1/auth/login \
 ```
 
 Use the token for authenticated requests:
+
 ```bash
 TOKEN="<your-token>"
 curl -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/status
 ```
 
 Queue a backup for a site (site IDs are hex strings from the sites list):
+
 ```bash
 curl -sX POST https://localhost/api/v1/backup \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"site_id":"<site-id>"}' | jq -r '.data.job_id'
 ```
+
 Poll `GET /api/v1/jobs/:job_id` (read `.data.status`) until it reaches `completed`.
 
 ## CI/CD Automation
@@ -344,12 +365,14 @@ Instead of the 24-hour web-session token, create an API token once (via the Web 
 ```
 
 Or via the API (`duration` is in hours; the token is created for the admin user):
+
 ```bash
 curl -sX POST https://localhost/api/v1/tokens \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"name":"ci-backups","duration":8760}' | jq -r '.data.token'
 ```
+
 Store the returned token in your CI secret store.
 
 ### 2. Authenticate
@@ -380,6 +403,7 @@ jobs:
         run: |
           RESPONSE="$(curl -fsS -X POST "https://${{ vars.APP_HOST }}/api/v1/backup" \
             -H "Authorization: Bearer ${{ secrets.WP_MAINTENANCE_TOKEN }}" \
+            -H "Content-Type: application/json" \
             -d "{\"site_id\":\"${{ vars.WP_SITE_ID }}\"}")"
           JOB_ID="$(echo "$RESPONSE" | jq -r '.data.job_id')"
           echo "job_id=$JOB_ID" >> "$GITHUB_OUTPUT"
@@ -411,49 +435,6 @@ export WP_MAINTENANCE_TOKEN="$CI_TOKEN"
 
 See `./bin/wp-maintenance help` for the full command list.
 
-## Project Structure
-
-```
-wp-maintenance-automation-go/
-├── cmd/
-│   ├── api/main.go         # API server entry point
-│   ├── cli/main.go         # CLI client entry point
-│   ├── server/main.go      # Combined API + Web server
-│   ├── web/main.go         # Web UI server entry point
-│   └── host-agent/main.go  # Host metrics agent daemon
-├── api/docs/               # API documentation (Swagger)
-├── internal/
-│   ├── apiserver/          # HTTP API server, routes, handlers, job worker
-│   ├── auth/               # Authentication (users, tokens, bcrypt)
-│   ├── backup/             # Backup creation & management
-│   ├── config/             # Configuration management
-│   ├── db/                 # PostgreSQL persistence, models, encryption at rest
-│   ├── healthcheck/        # HTTP health checking
-│   ├── metrics/            # Host + container metrics collection
-│   ├── restic/             # Restic client wrapper
-│   ├── restore/            # Restore operations
-│   ├── ssh/                # SSH/rsync operations
-│   ├── staging/            # Ephemeral Docker staging environment
-│   ├── upgrade/            # WordPress upgrade orchestrator
-│   └── webserver/          # Web UI server, SPA + API reverse proxy
-├── staging/                # Docker support files for staging
-│   ├── Dockerfile.wp       # WordPress container image
-│   ├── docker-compose.template.yml
-│   ├── wp-entrypoint.sh
-│   ├── wp-config-gen.sh
-│   └── apache-default-ssl.conf
-├── pkg/                    # Public/reusable packages
-│   ├── api/               # Generic API handler
-│   ├── models/            # Shared data models
-│   └── utils/             # Utility functions
-├── web/
-│   ├── ui/                 # Vite + React SPA source
-│   └── static/             # Built assets (CSS, JS, locales, UI bundle)
-├── Makefile                # Build and development utilities
-├── docker-compose.yml      # Docker Compose configuration
-└── Caddyfile               # Caddy reverse-proxy configuration
-```
-
 ## Testing
 
 ```bash
@@ -462,12 +443,14 @@ make test-cover  # Run tests with coverage
 ```
 
 Run specific test suite:
+
 ```bash
 go test ./internal/backup/...
 go test ./internal/upgrade/...
 ```
 
 Run visual Playwright test with explicit login password:
+
 ```bash
 WP_MAINTENANCE_TEST_PASSWORD='<your-password>' npx playwright test visual-test.spec.js --workers=1
 ```
@@ -475,11 +458,13 @@ WP_MAINTENANCE_TEST_PASSWORD='<your-password>' npx playwright test visual-test.s
 ## Docker
 
 Build and run with Docker Compose:
+
 ```bash
 docker compose up -d
 ```
 
 This starts:
+
 1. **Caddy** on ports 80/443 — reverse proxy with TLS
 2. **API server** on port 8081
 3. **Web UI** on port 8080
@@ -495,10 +480,3 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 ## License
 
 This project is licensed under the MIT License - see [LICENSE](LICENSE) file for details.
-
-## Support
-
-For issues and questions:
-- Open an issue on GitHub
-- Check existing documentation
-- Contact maintainers

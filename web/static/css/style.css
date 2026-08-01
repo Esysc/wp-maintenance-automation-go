@@ -559,6 +559,38 @@ summary:focus-visible {
 	box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.2);
 }
 
+.select-wrap {
+	position: relative;
+}
+
+.select-wrap select {
+	appearance: none;
+	-webkit-appearance: none;
+	background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236366a8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+	background-repeat: no-repeat;
+	background-position: right 0.7rem center;
+	padding-right: 2.2rem;
+	cursor: pointer;
+}
+
+.select-wrap select.loading {
+	background-image: none;
+}
+
+.select-spinner {
+	position: absolute;
+	right: 0.6rem;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 0.9rem;
+	height: 0.9rem;
+	border: 2px solid rgba(99, 102, 241, 0.3);
+	border-top-color: var(--primary);
+	border-radius: 50%;
+	animation: spin 0.6s linear infinite;
+	pointer-events: none;
+}
+
 .language-selector {
 	display: flex;
 	align-items: center;
@@ -668,16 +700,50 @@ summary:focus-visible {
 	color: var(--primary);
 }
 
-.checkbox-label {
+label.checkbox-label {
 	display: flex;
 	align-items: center;
-	gap: 0.58rem;
+	gap: 0.65rem;
+	cursor: pointer;
 }
 
-.checkbox-label input[type="checkbox"] {
-	width: 1rem;
-	height: 1rem;
-	accent-color: var(--primary);
+label.checkbox-label input[type="checkbox"] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 1.2rem;
+	height: 1.2rem;
+	margin: 0;
+	border-radius: 7px;
+	border: 2px solid rgba(99, 102, 241, 0.55);
+	background: #ffffff;
+	box-shadow: 0 1px 2px rgba(49, 46, 129, 0.12);
+	flex-shrink: 0;
+	cursor: pointer;
+	transition: all 160ms ease;
+}
+
+label.checkbox-label input[type="checkbox"]:hover {
+	border-color: rgba(99, 102, 241, 0.85);
+	box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.2);
+}
+
+label.checkbox-label input[type="checkbox"]:checked {
+	background-image: linear-gradient(135deg, var(--primary), var(--secondary)), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='20 6 9 17 4 12'%3E%3C/polyline%3E%3C/svg%3E");
+	background-size: cover, 0.78rem;
+	background-position: center;
+	background-repeat: no-repeat;
+	border-color: transparent;
+	box-shadow: 0 2px 6px rgba(99, 102, 241, 0.35);
+}
+
+label.checkbox-label input[type="checkbox"]:focus-visible {
+	outline: 3px solid rgba(99, 102, 241, 0.55);
+	outline-offset: 2px;
+}
+
+label.checkbox-label input[type="checkbox"]:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
 }
 
 table {

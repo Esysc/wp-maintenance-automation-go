@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed
+- Restore page: DB/File restore checkboxes now render only after a snapshot is selected, styled to match the UI (indigo gradient check mark).
+- Restore page: snapshot select shows a loading spinner while backups are fetched instead of flashing "No backups available".
+
 ## [0.3.0] - 2026-07-31
 
 ### Added

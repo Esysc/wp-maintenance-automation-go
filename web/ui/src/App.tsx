@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
 import { LanguageProvider, useLanguage } from './context/LanguageContext'
 import { SiteProvider } from './context/SiteContext'
+import { MetricsProvider } from './context/MetricsContext'
 import { loadLocale, getPreferredLanguage } from './i18n'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -54,6 +55,7 @@ function App() {
       <LanguageProvider>
         <ToastProvider>
           <AuthProvider>
+            <MetricsProvider>
             <SiteProvider>
             <Routes>
             <Route path="/login" element={<Login />} />
@@ -71,6 +73,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
             </SiteProvider>
+            </MetricsProvider>
           </AuthProvider>
         </ToastProvider>
       </LanguageProvider>

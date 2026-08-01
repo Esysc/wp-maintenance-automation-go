@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.4.0] - 2026-08-01
 
 ### Changed
 - Caddy: HTTPS now also works when accessing the UI via a LAN IP. Added `WP_MAINTENANCE_HOSTS` to list an extra site address (e.g. `192.168.1.116`) and `WP_MAINTENANCE_DEFAULT_SNI` (defaults to that host) so Caddy serves the correct certificate to SNI-less/IP connections, which previously failed with `ERR_SSL_PROTOCOL_ERROR`.
@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Restore page: snapshot select shows a loading spinner while backups are fetched instead of flashing "No backups available".
 - System page: removed the redundant status stat cards (already shown on the Dashboard); the page now focuses on host and container metrics.
 - System page: shows a loading spinner while metrics are fetched instead of "unavailable" placeholders; host/container metrics are now polled in the background by a shared provider, so data is ready when the page is opened.
+- API docs: the OpenAPI spec (`api/docs/openapi.yaml`) now documents all routes, including the previously missing ones (`/api/v1/backup`, `/api/v1/restore`, `/api/v1/upgrade`, `/api/v1/auth/state`, `/api/v1/sites/detect-config`, `/api/v1/staging/cleanup`, rehearsal and job endpoints, and `/api/v1/metrics`).
+- API docs: Swagger UI sidebar updated to match the current navigation (Sites and Rehearsal added, removed standalone Health Check page).
+- README: API Documentation section trimmed to point at the Swagger UI/spec URL instead of inline curl examples.
+- README: cleaned up stale and inaccurate content — replaced the endpoint list with a Swagger pointer, corrected the users/jobs HTTP methods, switched the database section from the old SQLite file to PostgreSQL, fixed broken Markdown tables, and updated the Docker service list and Web Interface features.
 
 ### Fixed
 - Upgrade page: healthcheck URL field is now pre-filled from the selected site's `healthcheck_url` configuration.
@@ -22,12 +26,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Removed
 - Standalone Health Check page (nav item, route, dashboard action card, and associated styles/locale strings). The `/api/v1/healthcheck` endpoint remains available for the CLI.
-
-### Changed
-- API docs: the OpenAPI spec (`api/docs/openapi.yaml`) now documents all routes, including the previously missing ones (`/api/v1/backup`, `/api/v1/restore`, `/api/v1/upgrade`, `/api/v1/auth/state`, `/api/v1/sites/detect-config`, `/api/v1/staging/cleanup`, rehearsal and job endpoints, and `/api/v1/metrics`).
-- API docs: Swagger UI sidebar updated to match the current navigation (Sites and Rehearsal added, removed standalone Health Check page).
-- README: API Documentation section trimmed to point at the Swagger UI/spec URL instead of inline curl examples.
-- README: cleaned up stale and inaccurate content — replaced the endpoint list with a Swagger pointer, corrected the users/jobs HTTP methods, switched the database section from the old SQLite file to PostgreSQL, fixed broken Markdown tables, and updated the Docker service list and Web Interface features.
 
 ## [0.3.0] - 2026-07-31
 

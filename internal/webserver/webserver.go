@@ -64,6 +64,8 @@ func Run() {
 	})
 	mux.HandleFunc("/api/login", s.handleAPILogin)
 	mux.HandleFunc("/api/auth/state", s.handleAPIAuthState)
+	mux.HandleFunc("/api/v1/auth/login", s.handleAPILogin)
+	mux.HandleFunc("/api/v1/auth/change-password", s.handleAPIChangePassword)
 	mux.HandleFunc("/api/backup", s.authMiddleware(s.handleAPIBackup))
 	mux.HandleFunc("/api/backups", s.authMiddleware(s.handleAPIBackups))
 	mux.HandleFunc("/api/backups/", s.authMiddleware(s.handleAPIBackups))
@@ -82,6 +84,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/upgrade", s.authMiddleware(s.handleAPIUpgrade))
 	mux.HandleFunc("/api/v1/restore", s.authMiddleware(s.handleAPIRestore))
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleAPIHealthcheck))
+	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleAPIStagingCleanup))
 	mux.HandleFunc("/api/v1/users", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/users/", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/tokens", s.authMiddleware(s.handleAPITokens))
@@ -256,6 +259,14 @@ func (s *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPIAuthState(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/auth/state")
+}
+
+func (s *WebServer) handleAPIChangePassword(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/auth/change-password")
+}
+
+func (s *WebServer) handleAPIStagingCleanup(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/staging/cleanup")
 }
 
 func (s *WebServer) handleAPIBackup(w http.ResponseWriter, r *http.Request) {

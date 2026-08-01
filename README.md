@@ -321,35 +321,7 @@ go run ./cmd/cli reset-password
 
 The web server serves an interactive OpenAPI/Swagger UI and the machine-readable spec at `/api/docs` (source: `api/docs/openapi.yaml`). The spec can drive client code generation for CI integrations.
 
-All API responses use a uniform envelope: `{"success": true, "data": <payload>}` on success and `{"success": false, "error": "<message>"}` on failure. The examples below read the relevant field from the envelope (e.g. `.data.token`, `.data.job_id`).
-
-### Example Usage
-
-Login and get a 24-hour token:
-
-```bash
-curl -sX POST https://localhost/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"password":"your-password"}' | jq -r '.data.token'
-```
-
-Use the token for authenticated requests:
-
-```bash
-TOKEN="<your-token>"
-curl -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/status
-```
-
-Queue a backup for a site (site IDs are hex strings from the sites list):
-
-```bash
-curl -sX POST https://localhost/api/v1/backup \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"site_id":"<site-id>"}' | jq -r '.data.job_id'
-```
-
-Poll `GET /api/v1/jobs/:job_id` (read `.data.status`) until it reaches `completed`.
+All API responses use a uniform envelope: `{"success": true, "data": <payload>}` on success and `{"success": false, "error": "<message>"}` on failure.
 
 ## CI/CD Automation
 

@@ -217,6 +217,241 @@ components:
         error_message:
           type: string
 
+    Job:
+      type: object
+      description: Background job (backup, restore, upgrade, or rehearsal) executed by the worker queue.
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum: [backup, restore, upgrade, rehearsal]
+        site_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, running, completed, failed, cancelled]
+        progress:
+          type: string
+          description: i18n key describing the current job step
+        progress_percent:
+          type: integer
+        result:
+          type: string
+          description: JSON-encoded result payload produced by the job
+        error:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    JobRequest:
+      type: object
+      description: Payload accepted by the job-enqueueing endpoints.
+      properties:
+        site_id:
+          type: string
+        snapshot_id:
+          type: string
+        auto_rollback:
+          type: boolean
+          description: Roll back automatically if the post-upgrade health check fails
+        healthcheck_url:
+          type: string
+          description: URL to probe after the upgrade to confirm the site is healthy
+        apply_db:
+          type: boolean
+          description: Restore the database
+        apply_files:
+          type: boolean
+          description: Restore the filesystem
+        confirm:
+          type: boolean
+          description: Set to true to actually run the restore (false performs a dry-run)
+
+    JobEnqueued:
+      type: object
+      properties:
+        message:
+          type: string
+          example: upgrade queued
+        job_id:
+          type: string
+        status:
+          type: string
+          example: queued
+        snapshot_id:
+          type: string
+        apply_db:
+          type: boolean
+        apply_files:
+          type: boolean
+
+    RehearsalEnv:
+      type: object
+      description: Details of a running rehearsal staging environment.
+      properties:
+        health_url:
+          type: string
+        compose_file:
+          type: string
+        project_name:
+          type: string
+        wp_version:
+          type: string
+        db_name:
+          type: string
+        snapshot_id:
+          type: string
+
+    RehearsalActive:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+        active:
+          type: boolean
+        env:
+          allOf:
+            - $ref: '#/components/schemas/RehearsalEnv'
+          nullable: true
+
+    SiteConfig:
+      type: object
+      description: SSH details used to auto-detect the WordPress database configuration of a site.
+      properties:
+        ssh_host:
+          type: string
+        ssh_port:
+          type: integer
+          default: 22
+        ssh_user:
+          type: string
+        ssh_key:
+          type: string
+        wp_root:
+          type: string
+          description: Optional known wp-config.php directory; auto-detected when omitted
+
+    DetectedConfig:
+      type: object
+      properties:
+        wp_root:
+          type: string
+        db_host:
+          type: string
+        db_user:
+          type: string
+        db_password:
+          type: string
+        db_name:
+          type: string
+
+    HostMetrics:
+      type: object
+      properties:
+        hostname:
+          type: string
+        platform:
+          type: string
+        os:
+          type: string
+        arch:
+          type: string
+        kernel:
+          type: string
+        uptime_seconds:
+          type: integer
+        cpus:
+          type: integer
+        load_avg:
+          type: array
+          items:
+            type: number
+        cpu_percent:
+          type: number
+        memory_total:
+          type: integer
+        memory_used:
+          type: integer
+        memory_percent:
+          type: number
+        disk_total:
+          type: integer
+        disk_used:
+          type: integer
+        disk_percent:
+          type: number
+        available:
+          type: boolean
+        docker:
+          type: object
+          nullable: true
+          properties:
+            name:
+              type: string
+            operating_system:
+              type: string
+            os_type:
+              type: string
+            architecture:
+              type: string
+            kernel_version:
+              type: string
+            server_version:
+              type: string
+            docker_root_dir:
+              type: string
+            ncpu:
+              type: integer
+            mem_total:
+              type: integer
+
+    Container:
+      type: object
+      properties:
+        name:
+          type: string
+        image:
+          type: string
+        state:
+          type: string
+        status:
+          type: string
+        running_for:
+          type: string
+        ports:
+          type: string
+        cpu_percent:
+          type: number
+        memory_used:
+          type: integer
+        memory_limit:
+          type: integer
+        memory_percent:
+          type: number
+
+    Metrics:
+      type: object
+      properties:
+        host:
+          $ref: '#/components/schemas/HostMetrics'
+        containers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Container'
+        containers_available:
+          type: boolean
+          description: Whether the Docker daemon was reachable
+        compose_managed:
+          type: boolean
+          description: Whether the found containers belong to the managed docker-compose project
+
     Error:
       type: object
       properties:
@@ -698,3 +933,527 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthcheckResult'
+
+  /api/v1/auth/state:
+    get:
+      summary: Authentication state
+      description: Reports whether the internal admin user exists and whether a password change is required.
+      operationId: getAuthState
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      setup_required:
+                        type: boolean
+                        description: True when no internal admin user exists yet
+                      force_pass:
+                        type: boolean
+                        description: True when a password change is required
+                  success:
+                    type: boolean
+
+  /api/v1/sites/detect-config:
+    post:
+      summary: Detect site database config
+      description: Connects to a site over SSH and detects the WordPress root and database configuration from wp-config.php.
+      operationId: detectSiteConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SiteConfig'
+      responses:
+        '200':
+          description: Detected configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/DetectedConfig'
+                  success:
+                    type: boolean
+        '400':
+          description: Invalid request body
+
+  /api/v1/backup:
+    post:
+      summary: Enqueue backup
+      description: Queues a backup job for the given site and returns its job ID.
+      operationId: enqueueBackup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id:
+                  type: string
+              required:
+                - site_id
+      responses:
+        '202':
+          description: Backup queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobEnqueued'
+                  success:
+                    type: boolean
+        '400':
+          description: site_id is required
+        '503':
+          description: Failed to enqueue backup job (queue full or unavailable)
+
+  /api/v1/restore:
+    post:
+      summary: Restore a snapshot
+      description: |
+        Restores a site from a restic snapshot. When `confirm` is false a dry-run is performed
+        and no job is enqueued; set `confirm: true` together with `apply_db`/`apply_files`
+        to run the restore as a background job.
+      operationId: restoreSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobRequest'
+      responses:
+        '200':
+          description: Restore dry-run performed (confirm=false)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      snapshot_id:
+                        type: string
+                      apply_db:
+                        type: boolean
+                      apply_files:
+                        type: boolean
+                      status:
+                        type: string
+                      warning:
+                        type: string
+                  success:
+                    type: boolean
+        '202':
+          description: Restore queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobEnqueued'
+                  success:
+                    type: boolean
+        '400':
+          description: Missing snapshot_id, site_id, or invalid request body
+        '503':
+          description: Failed to enqueue restore job
+
+  /api/v1/upgrade:
+    post:
+      summary: Upgrade a site
+      description: Queues an upgrade job for the given site, optionally with automatic rollback and a post-upgrade health check.
+      operationId: upgradeSite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id:
+                  type: string
+                auto_rollback:
+                  type: boolean
+                healthcheck_url:
+                  type: string
+              required:
+                - site_id
+      responses:
+        '202':
+          description: Upgrade queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobEnqueued'
+                  success:
+                    type: boolean
+        '400':
+          description: site_id is required
+        '503':
+          description: Failed to enqueue upgrade job
+
+  /api/v1/staging/cleanup:
+    post:
+      summary: Clean up a staging environment
+      description: Destroys the docker-compose staging environment for the given project.
+      operationId: cleanupStaging
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                compose_file:
+                  type: string
+                project_name:
+                  type: string
+              required:
+                - compose_file
+                - project_name
+      responses:
+        '200':
+          description: Staging environment cleaned up
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                      compose_file:
+                        type: string
+                      project_name:
+                        type: string
+                  success:
+                    type: boolean
+        '400':
+          description: compose_file and project_name are required
+        '500':
+          description: Cleanup failed
+
+  /api/v1/rehearsal:
+    post:
+      summary: Start a rehearsal
+      description: Queues a rehearsal job that spins up a staging environment from the given snapshot.
+      operationId: startRehearsal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                site_id:
+                  type: string
+                snapshot_id:
+                  type: string
+              required:
+                - site_id
+                - snapshot_id
+      responses:
+        '202':
+          description: Rehearsal queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/JobEnqueued'
+                  success:
+                    type: boolean
+        '400':
+          description: site_id and snapshot_id are required
+        '503':
+          description: Failed to enqueue rehearsal job
+
+  /api/v1/rehearsal/active:
+    get:
+      summary: Get active rehearsal
+      description: Returns the latest rehearsal job for a site and whether its staging environment is currently running.
+      operationId: getActiveRehearsal
+      parameters:
+        - name: site_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RehearsalActive'
+                  success:
+                    type: boolean
+        '400':
+          description: site_id is required
+        '500':
+          description: Failed to load rehearsal job
+
+  /api/v1/rehearsal/{id}:
+    get:
+      summary: Get rehearsal job
+      description: Returns the rehearsal job with the given ID.
+      operationId: getRehearsalById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Job'
+                  success:
+                    type: boolean
+        '404':
+          description: Rehearsal job not found
+
+  /api/v1/rehearsal/{id}/stop:
+    post:
+      summary: Stop a rehearsal
+      description: Destroys the staging environment and cancels the rehearsal job.
+      operationId: stopRehearsal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Rehearsal stopped
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                  success:
+                    type: boolean
+        '404':
+          description: Rehearsal job not found
+
+  /api/v1/rehearsal/{id}/wpcli:
+    post:
+      summary: Run wp-cli in a rehearsal
+      description: Executes an arbitrary wp-cli command inside the running rehearsal staging environment.
+      operationId: runRehearsalWpcli
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                args:
+                  type: string
+                  description: wp-cli arguments, e.g. "option get siteurl"
+              required:
+                - args
+      responses:
+        '200':
+          description: wp-cli output
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      success:
+                        type: boolean
+                      output:
+                        type: string
+                      error:
+                        type: string
+                  success:
+                    type: boolean
+        '400':
+          description: Rehearsal not ready or args is required
+        '404':
+          description: Rehearsal job not found
+
+  /api/v1/jobs:
+    get:
+      summary: List jobs
+      description: |
+        Lists background jobs. Without filters returns the latest job; pass `all=true` to list every job.
+        Filter by `site_id` and/or `type` to scope the results.
+      operationId: listJobs
+      parameters:
+        - name: site_id
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [backup, restore, upgrade, rehearsal]
+        - name: all
+          in: query
+          schema:
+            type: string
+            enum: ['0', '1', 'true']
+            description: Return all matching jobs instead of only the latest
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    description: Single latest Job, an array of Jobs (all=true), or null when none found
+                    oneOf:
+                      - type: array
+                        items:
+                          $ref: '#/components/schemas/Job'
+                      - $ref: '#/components/schemas/Job'
+                  success:
+                    type: boolean
+        '500':
+          description: Failed to list jobs
+
+  /api/v1/jobs/{id}:
+    get:
+      summary: Get job by ID
+      operationId: getJobById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Job'
+                  success:
+                    type: boolean
+        '404':
+          description: Job not found
+    post:
+      summary: Cancel job
+      description: Cancels a queued or running job.
+      operationId: cancelJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      cancelled:
+                        type: boolean
+                  success:
+                    type: boolean
+        '500':
+          description: Failed to cancel job
+    delete:
+      summary: Delete job
+      operationId: deleteJob
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      deleted:
+                        type: boolean
+                  success:
+                    type: boolean
+        '500':
+          description: Failed to delete job
+
+  /api/v1/metrics:
+    get:
+      summary: System metrics
+      description: Returns host resource metrics and docker container stats for the managed compose project.
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/Metrics'
+                  success:
+                    type: boolean

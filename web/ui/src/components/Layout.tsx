@@ -13,7 +13,6 @@ const NAV_ITEMS = [
   { to: '/upgrade', key: 'nav_upgrade', icon: 'upgrade' },
   { to: '/rehearsal', key: 'nav_rehearsal', icon: 'rehearsal' },
   { to: '/snapshots', key: 'nav_snapshots', icon: 'snapshots' },
-  { to: '/healthcheck', key: 'nav_healthcheck', icon: 'healthcheck' },
   { to: '/users', key: 'nav_users', icon: 'users' },
   { to: '/tokens', key: 'nav_tokens', icon: 'tokens' },
   { to: '/system', key: 'nav_system', icon: 'system' },

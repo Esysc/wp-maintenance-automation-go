@@ -6,7 +6,6 @@ export const ICONS: Record<string, string> = {
   upgrade: '<path d="M12 2a10 10 0 100 20 10 10 0 000-20zm-1 13h2v-6h2l-3-4-3 4h2v6z"/>',
   rehearsal: '<path d="M10 3v6L5 15v3a3 3 0 003 3h8a3 3 0 003-3v-3l-5-6V3h-4z"/>',
   snapshots: '<path d="M4 5h3l2-2h6l2 2h3a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V6a1 1 0 011-1zm8 3a4 4 0 100 8 4 4 0 000-8zm0 2a2 2 0 110 4 2 2 0 010-4z"/>',
-  healthcheck: '<path d="M3 12h4l2-6 4 12 2-6h6v-2h-6l-2 6-4-12-2 6H3v2z"/>',
   users: '<path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4.4 0-8 2-8 4.5V21h16v-2.5C20 16 16.4 14 12 14z"/>',
   user: '<path d="M12 12a4 4 0 100-8 4 4 0 000 8zm0 2c-4.4 0-8 2-8 4.5V21h16v-2.5C20 16 16.4 14 12 14z"/>',
   tokens: '<path d="M6 10V7a6 6 0 1112 0v3h1a1 1 0 011 1v8a1 1 0 01-1 1H5a1 1 0 01-1-1v-8a1 1 0 011-1h1zm2 0h8V7a4 4 0 10-8 0v3z"/>',

@@ -10,6 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Restore page: DB/File restore checkboxes now render only after a snapshot is selected, styled to match the UI (indigo gradient check mark).
 - Restore page: snapshot select shows a loading spinner while backups are fetched instead of flashing "No backups available".
 
+### Fixed
+- Upgrade page: healthcheck URL field is now pre-filled from the selected site's `healthcheck_url` configuration.
+
+### Removed
+- Standalone Health Check page (nav item, route, dashboard action card, and associated styles/locale strings). The `/api/v1/healthcheck` endpoint remains available for the CLI.
+
 ## [0.3.0] - 2026-07-31
 
 ### Added

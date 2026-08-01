@@ -980,34 +980,6 @@ pre {
 	font-weight: 600;
 }
 
-.health-stats {
-	display: grid;
-	grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-	gap: 0.7rem;
-	margin-top: 0.4rem;
-}
-
-.health-stats > div {
-	background: rgba(255, 255, 255, 0.55);
-	border-radius: 10px;
-	padding: 0.55rem 0.7rem;
-	display: flex;
-	flex-direction: column;
-	gap: 0.18rem;
-}
-
-.health-stats .health-label {
-	font-size: 0.72rem;
-	font-weight: 700;
-	text-transform: uppercase;
-	letter-spacing: 0.07em;
-	opacity: 0.75;
-}
-
-.health-stats strong {
-	font-size: 1.15rem;
-}
-
 .toast-stack {
 	position: fixed;
 	right: 1rem;

@@ -98,10 +98,6 @@ export default function Dashboard() {
           <h3>{t('action_run_upgrade')}</h3>
           <p>{t('action_upgrade_rollback')}</p>
         </button>
-        <button type="button" className="action-card" onClick={() => navigate('/healthcheck')}>
-          <h3>{t('action_health_check')}</h3>
-          <p>{t('action_verify_health')}</p>
-        </button>
         <button type="button" className="action-card" onClick={() => navigate('/snapshots')}>
           <h3>{t('action_view_snapshots')}</h3>
           <p>{t('action_view_restic_snapshots')}</p>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import SiteSelector from '../components/SiteSelector'
 import JobStatus from '../components/JobStatus'
 import JobHistory from '../components/JobHistory'
@@ -10,13 +10,18 @@ import { useSite } from '../context/SiteContext'
 import { useLanguage } from '../context/LanguageContext'
 
 export default function Upgrade() {
-  const { siteId, setSiteId } = useSite()
+  const { siteId, setSiteId, sites } = useSite()
   const [autoRollback, setAutoRollback] = useState(true)
   const [healthcheckUrl, setHealthcheckUrl] = useState('')
   const [confirm, setConfirm] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const { toast } = useToast()
   const { t } = useLanguage()
+
+  useEffect(() => {
+    const site = sites.find(s => s.id === siteId)
+    setHealthcheckUrl(site?.healthcheck_url || '')
+  }, [siteId, sites])
 
   function requestSubmit(e: React.FormEvent) {
     e.preventDefault()

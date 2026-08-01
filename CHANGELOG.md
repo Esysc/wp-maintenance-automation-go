@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - API docs: the OpenAPI spec (`api/docs/openapi.yaml`) now documents all routes, including the previously missing ones (`/api/v1/backup`, `/api/v1/restore`, `/api/v1/upgrade`, `/api/v1/auth/state`, `/api/v1/sites/detect-config`, `/api/v1/staging/cleanup`, rehearsal and job endpoints, and `/api/v1/metrics`).
 - API docs: Swagger UI sidebar updated to match the current navigation (Sites and Rehearsal added, removed standalone Health Check page).
 - README: API Documentation section trimmed to point at the Swagger UI/spec URL instead of inline curl examples.
+- README: cleaned up stale and inaccurate content — replaced the endpoint list with a Swagger pointer, corrected the users/jobs HTTP methods, switched the database section from the old SQLite file to PostgreSQL, fixed broken Markdown tables, and updated the Docker service list and Web Interface features.
 
 ## [0.3.0] - 2026-07-31
 

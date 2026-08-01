@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -265,16 +266,29 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		UserID      string `json:"user_id"`
-		NewPassword string `json:"new_password"`
+		UserID          string `json:"user_id"`
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if req.UserID == "" || req.NewPassword == "" || req.CurrentPassword == "" {
+		apiErr(w, http.StatusBadRequest, "user_id, current_password and new_password are required")
+		return
+	}
 
-	if err := s.Auth.ChangePassword(req.UserID, req.NewPassword); err != nil {
+	if err := s.Auth.ChangePasswordWithCurrent(req.UserID, req.CurrentPassword, req.NewPassword); err != nil {
+		if errors.Is(err, auth.ErrInvalidCurrentPass) {
+			apiErr(w, http.StatusUnauthorized, "invalid current password")
+			return
+		}
+		if errors.Is(err, auth.ErrWeakPassword) {
+			apiErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		apiErr(w, http.StatusInternalServerError, "failed to change password")
 		return
 	}

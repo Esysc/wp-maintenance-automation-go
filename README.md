@@ -27,43 +27,19 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - Comprehensive health checks
 - One-click rollback capabilities
 
-### API Endpoints
+### API
 
-- `POST /api/v1/auth/login` - Authenticate and get a token
-- `GET /api/v1/auth/state` - Check authentication state
-- `POST /api/v1/auth/change-password` - Change password (auth required)
-- `GET /api/v1/health` - Health check
-- `GET /api/v1/status` - System status overview
-- `GET /api/v1/backups` - List backups (filter with `?site_id=`)
-- `GET/DELETE /api/v1/backups/:id` - Backup details / delete
-- `POST /api/v1/backup` - Create a backup for a site
-- `POST /api/v1/restore` - Restore a snapshot to a site
-- `POST /api/v1/upgrade` - Perform WordPress upgrade (with optional staging rehearsal)
-- `GET /api/v1/snapshots` - List available restic snapshots
-- `POST /api/v1/healthcheck` - Run health checks
-- `GET/POST /api/v1/sites` - List / create sites
-- `GET/PUT/DELETE /api/v1/sites/:id` - Site details / update / delete
-- `POST /api/v1/sites/detect-config` - Auto-detect site config via SSH
-- `GET/POST /api/v1/users` - List / create users
-- `GET/DELETE /api/v1/users/:id` - User details / delete
-- `GET/POST /api/v1/tokens` - List / create API tokens
-- `DELETE /api/v1/tokens/:id` - Revoke token
-- `POST /api/v1/staging/cleanup` - Destroy a kept staging environment
-- `POST /api/v1/rehearsal` - Start a staging rehearsal for a site
-- `GET /api/v1/rehearsal/active` - Check whether a rehearsal environment is actually running
-- `GET /api/v1/rehearsal/:id` - Rehearsal job details
-- `POST /api/v1/rehearsal/:id/stop` - Stop a rehearsal and destroy its staging environment
-- `POST /api/v1/rehearsal/:id/wpcli` - Run a WP-CLI command in a rehearsal environment
-- `GET/POST /api/v1/jobs` - List / get background jobs (filter by `site_id`, `type`, `all`)
-- `GET/DELETE /api/v1/jobs/:id` - Job details / cancel
-- `GET /api/v1/metrics` - Host + container metrics
+- Full RESTful API for backups, restores, upgrades, staging rehearsal, background jobs, and metrics
+- Every endpoint is documented with an interactive Swagger UI at `https://localhost/api/docs` (see [API Documentation](#api-documentation))
+- Uniform JSON envelope: `{"success": true, "data": ...}` / `{"success": false, "error": "..."}`
 
 ### Web Interface
 
-- Dashboard for monitoring backup status
-- Real-time status updates
-- System status panel (`/system`) with status + health summaries and raw API details
-- Activity logs and reports
+- Dashboard with status overview and quick actions
+- Site management (SSH, DB, restic config, config auto-detect)
+- Backups, restore, upgrades, and staging rehearsal pages
+- System page (`/system`) with live host and container metrics
+- Multi-language support (9 languages)
 
 ## Getting Started
 
@@ -178,7 +154,6 @@ make clean      # Clean build artifacts
 Key environment variables (see `.env.example`):
 
 | Variable | Default | Description |
-
 |----------|---------|-------------|
 | `API_PORT` | `8081` | API server port |
 | `PORT` | `8081` | Alias for `API_PORT` |
@@ -189,7 +164,7 @@ Key environment variables (see `.env.example`):
 | `DB_USER` | `wpmaint` | PostgreSQL user |
 | `DB_PASSWORD` | `wpmaint` | PostgreSQL password |
 | `DB_NAME` | `wpmaintenance` | PostgreSQL database name |
-| `DATA_DIR` | `./data` | Data directory (DB, logs) |
+| `DATA_DIR` | `./data` | Data directory (default restic password file, runtime artifacts) |
 | `STATIC_DIR` | `./web/static` | Web static assets directory |
 | `LOG_LEVEL` | `info` | Log level |
 | `DEBUG` | `false` | Enable debug mode |
@@ -203,14 +178,15 @@ Key environment variables (see `.env.example`):
 | `WEB_TLS_DISABLE` | `false` | Disable Web TLS |
 | `WP_MAINTENANCE_TOKEN` | - | Pre-shared token for web->API auth |
 | `WP_MAINTENANCE_DOMAIN` | `localhost` | Domain for Caddy / Let's Encrypt |
+| `WP_MAINTENANCE_HOSTS` | - | Extra Caddy site address (e.g. your LAN IP `192.168.1.116`) to serve HTTPS on in addition to the domain |
+| `WP_MAINTENANCE_DEFAULT_SNI` | `localhost` | TLS SNI used for IP/SNI-less connections; defaults to `WP_MAINTENANCE_HOSTS` so IP access serves the right cert |
 
 ### Restic Repository Formats
 
 The `RESTIC_REPOSITORY` value (global or per-site) uses a URI scheme to select the backend:
 
 | Backend | Example |
-
-|---|---|
+|---------|---------|
 | Local | `local:/data/backups` or `/data/backups` |
 | S3 / S3-compatible | `s3:https://s3.amazonaws.com/my-bucket` |
 | S3 (MinIO) | `s3:https://minio.example.com/my-bucket` |
@@ -239,6 +215,8 @@ Each WordPress site is configured through the Web UI and stored in the database 
 - **No domain set** (`WP_MAINTENANCE_DOMAIN` empty): Caddy uses self-signed certificates via `tls internal` — suitable for local development.
 - **Domain set** (`WP_MAINTENANCE_DOMAIN=example.com`): Caddy automatically provisions Let's Encrypt certificates for your domain.
 - HTTP on port 80 redirects to HTTPS on port 443 automatically.
+- **Accessing via LAN IP**: set `WP_MAINTENANCE_HOSTS=<your-ip>` (e.g. `WP_MAINTENANCE_HOSTS=192.168.1.116 docker compose up -d`) so Caddy issues a certificate for that IP. Browsers don't send SNI for IP addresses, so `WP_MAINTENANCE_DEFAULT_SNI` is set to that IP automatically to serve the matching certificate.
+- Certificates are issued by Caddy's internal CA (root at `caddy_data/caddy/pki/authorities/local/root.crt`). To avoid browser warnings, trust that root certificate on each client machine (or use a real domain for Let's Encrypt).
 
 ## Staging Rehearsal
 
@@ -278,12 +256,9 @@ When `HOST_AGENT_URL` is unset, the API falls back to Docker host info automatic
 
 ## Authentication and Login Modes
 
-- Login supports two modes:
-  - First setup / forced password mode: requires `password` and `passwordConfirm`
-  - Normal login mode: requires only `password`
-- Auth state endpoint:
-  - `GET /api/v1/auth/state` (API)
-  - `GET /api/auth/state` (web proxy)
+- `GET /api/v1/auth/state` reports whether setup is required (`setup_required`) and whether a password change is forced (`force_pass`).
+- **First use**: the first `POST /api/v1/auth/login` creates the internal admin user with the provided password.
+- **Normal login**: `POST /api/v1/auth/login` with the existing password returns a 24-hour session token.
 
 ### Password Reset (CLI Recovery)
 
@@ -299,11 +274,11 @@ Or from source:
 go run ./cmd/cli reset-password
 ```
 
-### Database Location and Git Ignore
+### Database and Data Storage
 
-- Runtime DB file: `data/wp-maintenance.db` (host filesystem)
-- In Docker Compose, host `./data` is mounted into `/app/data`
-- `data/` is ignored by git in `.gitignore`
+- Application data is stored in PostgreSQL (the `db` compose service in Docker Compose, or any Postgres instance configured via the `DB_*` env vars)
+- In Docker Compose, host `./data` is mounted into `/app/data` (default restic password file, runtime artifacts)
+- `data/`, `logs/`, `backup_artifacts/`, and `restore/` are ignored by git in `.gitignore`
 
 ### Encryption at Rest
 
@@ -319,37 +294,11 @@ go run ./cmd/cli reset-password
 
 ## API Documentation
 
-The web server serves an interactive OpenAPI/Swagger UI and the machine-readable spec at `/api/docs` (source: `api/docs/openapi.yaml`). The spec can drive client code generation for CI integrations.
+Interactive API documentation is available as a Swagger UI at `https://localhost/api/docs` (or `/api/docs` on the web server). It documents every endpoint with request/response schemas and a "Try it out" console.
 
-All API responses use a uniform envelope: `{"success": true, "data": <payload>}` on success and `{"success": false, "error": "<message>"}` on failure. The examples below read the relevant field from the envelope (e.g. `.data.token`, `.data.job_id`).
+The machine-readable OpenAPI spec is served at `/api/docs/openapi.yaml` (source: `api/docs/openapi.yaml`) and can drive client code generation for CI integrations.
 
-### Example Usage
-
-Login and get a 24-hour token:
-
-```bash
-curl -sX POST https://localhost/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"password":"your-password"}' | jq -r '.data.token'
-```
-
-Use the token for authenticated requests:
-
-```bash
-TOKEN="<your-token>"
-curl -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/status
-```
-
-Queue a backup for a site (site IDs are hex strings from the sites list):
-
-```bash
-curl -sX POST https://localhost/api/v1/backup \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"site_id":"<site-id>"}' | jq -r '.data.job_id'
-```
-
-Poll `GET /api/v1/jobs/:job_id` (read `.data.status`) until it reaches `completed`.
+All API responses use a uniform envelope: `{"success": true, "data": <payload>}` on success and `{"success": false, "error": "<message>"}` on failure.
 
 ## CI/CD Automation
 
@@ -468,6 +417,7 @@ This starts:
 1. **Caddy** on ports 80/443 — reverse proxy with TLS
 2. **API server** on port 8081
 3. **Web UI** on port 8080
+4. **PostgreSQL** on 127.0.0.1:5432 — storage
 
 For local development without a real domain, Caddy uses self-signed certificates. Browsers will show a security warning — proceed anyway or use `curl -k`.
 

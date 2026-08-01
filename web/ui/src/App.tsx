@@ -4,6 +4,7 @@ import { AuthProvider, useAuth } from './context/AuthContext'
 import { ToastProvider } from './context/ToastContext'
 import { LanguageProvider, useLanguage } from './context/LanguageContext'
 import { SiteProvider } from './context/SiteContext'
+import { MetricsProvider } from './context/MetricsContext'
 import { loadLocale, getPreferredLanguage } from './i18n'
 import Layout from './components/Layout'
 import Login from './pages/Login'
@@ -13,7 +14,6 @@ import Restore from './pages/Restore'
 import Upgrade from './pages/Upgrade'
 import Rehearsal from './pages/Rehearsal'
 import Snapshots from './pages/Snapshots'
-import HealthCheck from './pages/HealthCheck'
 import Sites from './pages/Sites'
 import Users from './pages/Users'
 import Tokens from './pages/Tokens'
@@ -55,6 +55,7 @@ function App() {
       <LanguageProvider>
         <ToastProvider>
           <AuthProvider>
+            <MetricsProvider>
             <SiteProvider>
             <Routes>
             <Route path="/login" element={<Login />} />
@@ -64,7 +65,6 @@ function App() {
             <Route path="/upgrade" element={<AuthGuard><Upgrade /></AuthGuard>} />
             <Route path="/rehearsal" element={<AuthGuard><Rehearsal /></AuthGuard>} />
             <Route path="/snapshots" element={<AuthGuard><Snapshots /></AuthGuard>} />
-            <Route path="/healthcheck" element={<AuthGuard><HealthCheck /></AuthGuard>} />
             <Route path="/sites" element={<AuthGuard><Sites /></AuthGuard>} />
             <Route path="/users" element={<AuthGuard><Users /></AuthGuard>} />
             <Route path="/tokens" element={<AuthGuard><Tokens /></AuthGuard>} />
@@ -73,6 +73,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
             </Routes>
             </SiteProvider>
+            </MetricsProvider>
           </AuthProvider>
         </ToastProvider>
       </LanguageProvider>

@@ -25,22 +25,26 @@ export default function Restore() {
   const [applyFiles, setApplyFiles] = useState(true)
   const [confirm, setConfirm] = useState(false)
   const [restoring, setRestoring] = useState(false)
+  const [loading, setLoading] = useState(false)
   const { toast } = useToast()
   const { t } = useLanguage()
 
   useEffect(() => {
     if (siteId) loadBackups()
-    else { setBackups([]); setSnapshotId('') }
+    else { setBackups([]); setSnapshotId(''); setLoading(false) }
   }, [siteId])
 
   async function loadBackups() {
     setSnapshotId('')
+    setLoading(true)
+    setBackups([])
     const res = await apiGet<Backup[]>('/api/v1/backups?site_id=' + siteId)
     if (res.success && res.data) {
       setBackups(Array.isArray(res.data) ? res.data : [])
     } else if (res.error) {
       toast(res.error, 'error')
     }
+    setLoading(false)
   }
 
   function requestRestore(e: React.FormEvent) {
@@ -85,40 +89,56 @@ export default function Restore() {
         <SiteHint />
       )}
 
-      {siteId && backups.length === 0 && (
-        <div className="card"><p>{t('restore_no_backups')}</p></div>
-      )}
-
-      {siteId && backups.length > 0 && (
+      {siteId && (
         <div className="card">
-          <form onSubmit={requestRestore}>
+          {loading ? (
             <div className="form-group">
               <label>{t('restore_snapshot_label')}</label>
-              <select value={snapshotId} onChange={e => setSnapshotId(e.target.value)} required>
-                <option value="" disabled>{t('rehearsal_select_snapshot')}</option>
-                {backups.map(b => (
-                  <option key={b.id} value={b.snapshot_id || b.timestamp}>
-                    {b.timestamp} &mdash; {b.wp_version || ''} ({b.host})
-                  </option>
-                ))}
-              </select>
+              <div className="select-wrap">
+                <select className="loading" value="" disabled>
+                  <option value="" disabled>{t('loading')}</option>
+                </select>
+                <span className="select-spinner" aria-hidden="true" />
+              </div>
             </div>
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input type="checkbox" checked={applyDb} onChange={e => setApplyDb(e.target.checked)} />
-                <span>{t('apply_db_restore')}</span>
-              </label>
-            </div>
-            <div className="form-group">
-              <label className="checkbox-label">
-                <input type="checkbox" checked={applyFiles} onChange={e => setApplyFiles(e.target.checked)} />
-                <span>{t('apply_files_restore')}</span>
-              </label>
-            </div>
-            <div className="form-group">
-              <button type="submit" className="btn btn-warning">{t('btn_restore')}</button>
-            </div>
-          </form>
+          ) : backups.length === 0 ? (
+            <p>{t('restore_no_backups')}</p>
+          ) : (
+            <form onSubmit={requestRestore}>
+              <div className="form-group">
+                <label>{t('restore_snapshot_label')}</label>
+                <div className="select-wrap">
+                  <select value={snapshotId} onChange={e => setSnapshotId(e.target.value)} required>
+                    <option value="" disabled>{t('rehearsal_select_snapshot')}</option>
+                    {backups.map(b => (
+                      <option key={b.id} value={b.snapshot_id || b.timestamp}>
+                        {b.timestamp} &mdash; {b.wp_version || ''} ({b.host})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              {snapshotId && (
+                <>
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={applyDb} onChange={e => setApplyDb(e.target.checked)} />
+                      <span>{t('apply_db_restore')}</span>
+                    </label>
+                  </div>
+                  <div className="form-group">
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={applyFiles} onChange={e => setApplyFiles(e.target.checked)} />
+                      <span>{t('apply_files_restore')}</span>
+                    </label>
+                  </div>
+                </>
+              )}
+              <div className="form-group">
+                <button type="submit" className="btn btn-warning" disabled={!snapshotId}>{t('btn_restore')}</button>
+              </div>
+            </form>
+          )}
         </div>
       )}
 

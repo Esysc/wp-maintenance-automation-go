@@ -91,6 +91,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile
     environment:
       - WP_MAINTENANCE_DOMAIN=${WP_MAINTENANCE_DOMAIN:-localhost}
+      - WP_MAINTENANCE_HOSTS=${WP_MAINTENANCE_HOSTS:-}
+      - WP_MAINTENANCE_DEFAULT_SNI=${WP_MAINTENANCE_DEFAULT_SNI:-${WP_MAINTENANCE_HOSTS:-localhost}}
     depends_on:
       - web
       - api

@@ -33,6 +33,7 @@ var (
 	ErrPasswordChange     = errors.New("password change required")
 	ErrTokenExpired       = errors.New("token expired")
 	ErrTokenRevoked       = errors.New("token revoked")
+	ErrInvalidCurrentPass = errors.New("invalid current password")
 	ErrWeakPassword       = errors.New("password must be at least 8 characters with uppercase, lowercase, and digit")
 )
 
@@ -118,6 +119,10 @@ func (am *AuthManager) Authenticate(username, password string) (*User, error) {
 
 // ChangePassword updates user password and clears force password flag
 func (am *AuthManager) ChangePassword(userID, newPassword string) error {
+	if err := ValidatePassword(newPassword); err != nil {
+		return err
+	}
+
 	user, err := am.GetUserByID(userID)
 	if err != nil {
 		return err
@@ -128,6 +133,20 @@ func (am *AuthManager) ChangePassword(userID, newPassword string) error {
 	user.UpdatedAt = time.Now()
 
 	return am.db.UpdateUser(user)
+}
+
+// ChangePasswordWithCurrent verifies the current password before applying a password change.
+func (am *AuthManager) ChangePasswordWithCurrent(userID, currentPassword, newPassword string) error {
+	user, err := am.GetUserByID(userID)
+	if err != nil {
+		return err
+	}
+
+	if !VerifyPassword(currentPassword, user.Password) {
+		return ErrInvalidCurrentPass
+	}
+
+	return am.ChangePassword(userID, newPassword)
 }
 
 // GetAdminUser returns the admin user

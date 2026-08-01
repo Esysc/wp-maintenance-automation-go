@@ -64,6 +64,8 @@ func Run() {
 	})
 	mux.HandleFunc("/api/login", s.handleAPILogin)
 	mux.HandleFunc("/api/auth/state", s.handleAPIAuthState)
+	mux.HandleFunc("/api/v1/auth/login", s.handleAPILogin)
+	mux.HandleFunc("/api/v1/auth/change-password", s.handleAPIChangePassword)
 	mux.HandleFunc("/api/backup", s.authMiddleware(s.handleAPIBackup))
 	mux.HandleFunc("/api/backups", s.authMiddleware(s.handleAPIBackups))
 	mux.HandleFunc("/api/backups/", s.authMiddleware(s.handleAPIBackups))
@@ -82,6 +84,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/upgrade", s.authMiddleware(s.handleAPIUpgrade))
 	mux.HandleFunc("/api/v1/restore", s.authMiddleware(s.handleAPIRestore))
 	mux.HandleFunc("/api/v1/healthcheck", s.authMiddleware(s.handleAPIHealthcheck))
+	mux.HandleFunc("/api/v1/staging/cleanup", s.authMiddleware(s.handleAPIStagingCleanup))
 	mux.HandleFunc("/api/v1/users", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/users/", s.authMiddleware(s.handleAPIUsers))
 	mux.HandleFunc("/api/v1/tokens", s.authMiddleware(s.handleAPITokens))
@@ -258,6 +261,14 @@ func (s *WebServer) handleAPIAuthState(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/auth/state")
 }
 
+func (s *WebServer) handleAPIChangePassword(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/auth/change-password")
+}
+
+func (s *WebServer) handleAPIStagingCleanup(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequest(w, r, "/api/v1/staging/cleanup")
+}
+
 func (s *WebServer) handleAPIBackup(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/backup")
 }
@@ -418,6 +429,16 @@ func (s *WebServer) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, "/api/v1/metrics")
 }
 
+func (s *WebServer) proxyAuth(apiReq *http.Request, r *http.Request) {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		apiReq.Header.Set("Authorization", auth)
+		return
+	}
+	if c, err := r.Cookie("token"); err == nil {
+		apiReq.Header.Set("Authorization", "Bearer "+c.Value)
+	}
+}
+
 func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -433,9 +454,7 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 	apiReq, _ := http.NewRequest(r.Method, apiURL, strings.NewReader(string(body)))
 	apiReq.Header.Set("Content-Type", "application/json")
 
-	if c, err := r.Cookie("token"); err == nil {
-		apiReq.Header.Set("Authorization", "Bearer "+c.Value)
-	}
+	s.proxyAuth(apiReq, r)
 
 	resp, err := s.client.Do(apiReq)
 	if err != nil {
@@ -465,9 +484,7 @@ func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, b
 	apiReq, _ := http.NewRequest(r.Method, s.apiBaseURL+apiPath, strings.NewReader(string(body)))
 	apiReq.Header.Set("Content-Type", "application/json")
 
-	if c, err := r.Cookie("token"); err == nil {
-		apiReq.Header.Set("Authorization", "Bearer "+c.Value)
-	}
+	s.proxyAuth(apiReq, r)
 
 	resp, err := s.client.Do(apiReq)
 	if err != nil {

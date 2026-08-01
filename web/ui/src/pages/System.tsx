@@ -1,67 +1,6 @@
-import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { apiGet } from '../api/client'
+import { useMetrics } from '../context/MetricsContext'
 import { useLanguage } from '../context/LanguageContext'
-
-interface StatusData {
-  server: string
-  sites: number
-  backups: number
-  snapshots: number
-  uptime: number
-}
-
-interface MetricContainer {
-  name: string
-  image: string
-  state: string
-  status: string
-  running_for: string
-  ports: string
-  cpu_percent?: number
-  memory_used?: number
-  memory_limit?: number
-  memory_percent?: number
-}
-
-interface DockerHost {
-  name: string
-  operating_system: string
-  os_type: string
-  architecture: string
-  kernel_version: string
-  server_version: string
-  docker_root_dir: string
-  ncpu: number
-  mem_total: number
-}
-
-interface HostMetrics {
-  hostname: string
-  platform: string
-  os: string
-  arch: string
-  kernel: string
-  uptime_seconds: number
-  cpus: number
-  load_avg: number[]
-  cpu_percent: number
-  memory_total: number
-  memory_used: number
-  memory_percent: number
-  disk_total: number
-  disk_used: number
-  disk_percent: number
-  available: boolean
-  docker?: DockerHost
-}
-
-interface MetricsData {
-  host: HostMetrics
-  containers: MetricContainer[]
-  containers_available: boolean
-  compose_managed: boolean
-}
 
 function formatBytes(bytes?: number): string {
   if (bytes === undefined || bytes === null || bytes <= 0) return '-'
@@ -112,35 +51,8 @@ function Meter({ label, percent, detail }: { label: string; percent: number; det
 }
 
 export default function System() {
-  const [status, setStatus] = useState<StatusData | null>(null)
-  const [metrics, setMetrics] = useState<MetricsData | null>(null)
-  const [metricsRaw, setMetricsRaw] = useState('')
-  const inFlight = useRef(false)
+  const { metrics, metricsRaw, loading } = useMetrics()
   const { t } = useLanguage()
-
-  useEffect(() => {
-    loadStatus()
-    loadMetrics()
-    const id = setInterval(loadMetrics, 10000)
-    return () => clearInterval(id)
-  }, [])
-
-  async function loadStatus() {
-    const sr = await apiGet('/api/v1/status')
-    if (sr.success && sr.data) setStatus(sr.data as StatusData)
-  }
-
-  async function loadMetrics() {
-    if (inFlight.current) return
-    inFlight.current = true
-    try {
-      const mr = await apiGet<MetricsData>('/api/v1/metrics')
-      setMetricsRaw(JSON.stringify(mr, null, 2))
-      if (mr.success && mr.data) setMetrics(mr.data)
-    } finally {
-      inFlight.current = false
-    }
-  }
 
   const host = metrics?.host
   const hostDetails: Array<[string, string]> = [
@@ -157,28 +69,11 @@ export default function System() {
     <>
       <header className="page-header"><h1>{t('page_title_system')}</h1></header>
 
-      <div className="stats-grid">
-        <div className="stat-card">
-          <h3>{t('label_server')}</h3>
-          <p className="stat-value">{status?.server || '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_sites')}</h3>
-          <p className="stat-value">{status?.sites ?? '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_backups')}</h3>
-          <p className="stat-value">{status?.backups ?? '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_snapshots')}</h3>
-          <p className="stat-value">{status?.snapshots ?? '-'}</p>
-        </div>
-      </div>
-
       <div className="card">
         <h3>{t('system_host_metrics')}</h3>
-        {host?.available ? (
+        {loading ? (
+          <div className="loading-state"><span className="spinner" />{t('status_loading_system')}</div>
+        ) : host?.available ? (
           <>
             <div className="metrics-grid">
               <Meter label={t('metric_cpu')} percent={host.cpu_percent} detail={`${Math.round(host.cpu_percent || 0)}%`} />
@@ -198,8 +93,10 @@ export default function System() {
 
       <div className="card">
         <h3>{t('system_containers')}</h3>
-        {!metrics ? (
-          <p>{t('status_loading_system')}</p>
+        {loading ? (
+          <div className="loading-state"><span className="spinner" />{t('status_loading_system')}</div>
+        ) : !metrics ? (
+          <p>{t('containers_unavailable')}</p>
         ) : !metrics.containers_available ? (
           <p>{t('containers_unavailable')}</p>
         ) : !metrics.compose_managed ? (

@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { apiGet, apiPost } from '../api/client'
 import { useLanguage } from '../context/LanguageContext'
-import { jobTypeLabel, jobStatusLabel } from '../i18n'
+import { jobTypeLabel, jobStatusLabel, progressLabel } from '../i18n'
 
 interface Job {
   id: string
@@ -87,7 +87,7 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
         <span>{jobTypeLabel(t, job.type)} &bull; {jobStatusLabel(t, job.status)}</span>
         <span>{pct}%</span>
       </div>
-      <div className="job-progress-detail">{job.progress || jobStatusLabel(t, job.status)}</div>
+      <div className="job-progress-detail">{progressLabel(t, job.progress) || jobStatusLabel(t, job.status)}</div>
       <div className="job-progress-track">
         <div className="job-progress-fill" style={{ width: pct + '%' }} />
       </div>

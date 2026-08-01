@@ -60,5 +60,13 @@ export function jobStatusLabel(t: (k: string) => string, status: string): string
   return label === key ? status : label
 }
 
+export function progressLabel(t: (k: string) => string, progress: string): string {
+  if (progress?.startsWith('job_progress_')) {
+    const label = t(progress)
+    if (label !== progress) return label
+  }
+  return progress
+}
+
 export { SUPPORTED as LANGUAGE_OPTIONS }
 export type { Language as LanguageCode }

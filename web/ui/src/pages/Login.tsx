@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
-import { useToast } from '../context/ToastContext'
 import { useLanguage, LANGUAGE_OPTIONS } from '../context/LanguageContext'
 import LoadingState from '../components/LoadingState'
 
@@ -17,7 +16,6 @@ function passwordStrength(password: string): number {
 
 export default function Login() {
   const { authenticated, setupRequired, loading, login } = useAuth()
-  const { toast } = useToast()
   const { lang, setLang, t } = useLanguage()
   const navigate = useNavigate()
   const [password, setPassword] = useState('')

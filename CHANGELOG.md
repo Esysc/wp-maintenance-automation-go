@@ -16,6 +16,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Upgrade page: healthcheck URL field is now pre-filled from the selected site's `healthcheck_url` configuration.
 - Swagger UI "Try it out" failing to reach the API: the OpenAPI spec now uses a relative server URL (same origin as the docs page) so requests go through the web proxy instead of hitting the API's self-signed cert / CORS directly.
 - Web API proxy now forwards an incoming `Authorization` header (used by Swagger UI) in addition to the session cookie.
+- Users page: change password now consistently uses animated toast notifications for client-side validation failures, backend errors, and success states.
+- Password change hardening: `/api/v1/auth/change-password` now requires `current_password`, verifies it server-side, and enforces password strength validation on the backend.
 
 ### Removed
 - Standalone Health Check page (nav item, route, dashboard action card, and associated styles/locale strings). The `/api/v1/healthcheck` endpoint remains available for the CLI.

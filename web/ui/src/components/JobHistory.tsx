@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { apiGet, apiDelete, apiPost } from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
-import { jobTypeLabel, jobStatusLabel } from '../i18n'
+import { jobTypeLabel, jobStatusLabel, progressLabel } from '../i18n'
 import ConfirmDialog from './ConfirmDialog'
 
 interface Job {
@@ -102,7 +102,7 @@ export default function JobHistory({ jobType, siteId }: Props) {
               <tr key={job.id}>
                 <td>{jobTypeLabel(t, job.type)}{details ? <><br /><small>{details}</small></> : ''}</td>
                 <td>{jobStatusLabel(t, job.status)}</td>
-                <td>{job.progress || jobStatusLabel(t, job.status)}</td>
+                <td>{progressLabel(t, job.progress) || jobStatusLabel(t, job.status)}</td>
                 <td title={job.error || undefined}>{(job.error || '').substring(0, 80)}</td>
                 <td>{(job.updated_at || '').substring(0, 19).replace('T', ' ')}</td>
                 <td>

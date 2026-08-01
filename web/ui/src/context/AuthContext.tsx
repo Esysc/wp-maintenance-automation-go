@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import { apiGet, apiPost, checkAuth, type ApiResponse } from '../api/client'
+import { apiGet, apiPost, checkAuth } from '../api/client'
 
 interface AuthState {
   authenticated: boolean

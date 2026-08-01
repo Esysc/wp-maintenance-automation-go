@@ -222,6 +222,79 @@ func TestHandleLoginSecondTime(t *testing.T) {
 	}
 }
 
+func TestHandleChangePasswordRequiresCurrentPassword(t *testing.T) {
+	s := setupTestAPIServer(t)
+
+	loginReqBody := map[string]string{
+		"password":        "AdminPass123",
+		"passwordConfirm": "AdminPass123",
+	}
+	loginBodyBytes, _ := json.Marshal(loginReqBody)
+	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewBuffer(loginBodyBytes))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRR := httptest.NewRecorder()
+	s.handleLogin(loginRR, loginReq)
+
+	var loginResult map[string]interface{}
+	json.Unmarshal(loginRR.Body.Bytes(), &loginResult)
+	data := loginResult["data"].(map[string]interface{})
+	adminToken := data["token"].(string)
+	adminUserID := data["user_id"].(string)
+
+	reqBody := map[string]string{
+		"user_id":      adminUserID,
+		"new_password": "Newpassword123",
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	rr := httptest.NewRecorder()
+	s.authMiddleware(s.handleChangePassword)(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("Expected status 400, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestHandleChangePasswordInvalidCurrentPassword(t *testing.T) {
+	s := setupTestAPIServer(t)
+
+	loginReqBody := map[string]string{
+		"password":        "AdminPass123",
+		"passwordConfirm": "AdminPass123",
+	}
+	loginBodyBytes, _ := json.Marshal(loginReqBody)
+	loginReq := httptest.NewRequest("POST", "/api/v1/auth/login", bytes.NewBuffer(loginBodyBytes))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRR := httptest.NewRecorder()
+	s.handleLogin(loginRR, loginReq)
+
+	var loginResult map[string]interface{}
+	json.Unmarshal(loginRR.Body.Bytes(), &loginResult)
+	data := loginResult["data"].(map[string]interface{})
+	adminToken := data["token"].(string)
+	adminUserID := data["user_id"].(string)
+
+	reqBody := map[string]string{
+		"user_id":          adminUserID,
+		"current_password": "WrongPass123",
+		"new_password":     "Newpassword123",
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	rr := httptest.NewRecorder()
+	s.authMiddleware(s.handleChangePassword)(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("Expected status 401, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestHandleTokensCreateDefaultUser(t *testing.T) {
 	s := setupTestAPIServer(t)
 

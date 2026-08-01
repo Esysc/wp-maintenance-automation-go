@@ -133,7 +133,7 @@ func TestCreateToken(t *testing.T) {
 
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
-	am.ChangePassword(adminID, "newpass")
+	am.ChangePassword(adminID, "Newpass123")
 
 	token, err := am.CreateToken(adminID, "test-token", 24*time.Hour)
 	if err != nil {
@@ -159,7 +159,7 @@ func TestGetTokenByValue(t *testing.T) {
 
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
-	am.ChangePassword(adminID, "newpass")
+	am.ChangePassword(adminID, "Newpass123")
 
 	created, _ := am.CreateToken(adminID, "test-token", 24*time.Hour)
 
@@ -179,7 +179,7 @@ func TestRevokeToken(t *testing.T) {
 
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
-	am.ChangePassword(adminID, "newpass")
+	am.ChangePassword(adminID, "Newpass123")
 
 	created, _ := am.CreateToken(adminID, "test-token", 24*time.Hour)
 
@@ -245,7 +245,7 @@ func TestChangePassword(t *testing.T) {
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
 
-	err := am.ChangePassword(adminID, "newpassword")
+	err := am.ChangePassword(adminID, "Newpassword123")
 	if err != nil {
 		t.Fatalf("failed to change password: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestTokenExpiration(t *testing.T) {
 
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
-	am.ChangePassword(adminID, "newpass")
+	am.ChangePassword(adminID, "Newpass123")
 
 	// Create token with 0 duration (no expiry)
 	token, err := am.CreateToken(adminID, "no-expiry", 0)
@@ -326,5 +326,60 @@ func TestHashPasswordWithSalt(t *testing.T) {
 
 	if !VerifyPassword("password123", hash2) {
 		t.Error("expected hash2 to verify against password")
+	}
+}
+
+func TestChangePasswordWeakPasswordRejected(t *testing.T) {
+	am := setupTestAuth(t)
+	am.InitializeAdmin("admin", "password123")
+
+	users, _ := am.LoadUsers()
+	adminID := users[0].ID
+
+	err := am.ChangePassword(adminID, "weak")
+	if err == nil {
+		t.Fatal("expected error for weak password")
+	}
+	if err != ErrWeakPassword {
+		t.Fatalf("expected ErrWeakPassword, got %v", err)
+	}
+}
+
+func TestChangePasswordWithCurrent(t *testing.T) {
+	am := setupTestAuth(t)
+	am.InitializeAdmin("admin", "password123")
+
+	users, _ := am.LoadUsers()
+	adminID := users[0].ID
+
+	err := am.ChangePassword(adminID, "Newpassword123")
+	if err != nil {
+		t.Fatalf("failed to set initial password: %v", err)
+	}
+
+	err = am.ChangePasswordWithCurrent(adminID, "Newpassword123", "Nextpassword123")
+	if err != nil {
+		t.Fatalf("failed to change password with current password: %v", err)
+	}
+}
+
+func TestChangePasswordWithCurrentInvalidCurrent(t *testing.T) {
+	am := setupTestAuth(t)
+	am.InitializeAdmin("admin", "password123")
+
+	users, _ := am.LoadUsers()
+	adminID := users[0].ID
+
+	err := am.ChangePassword(adminID, "Newpassword123")
+	if err != nil {
+		t.Fatalf("failed to set initial password: %v", err)
+	}
+
+	err = am.ChangePasswordWithCurrent(adminID, "Wrongpassword123", "Nextpassword123")
+	if err == nil {
+		t.Fatal("expected error for invalid current password")
+	}
+	if err != ErrInvalidCurrentPass {
+		t.Fatalf("expected ErrInvalidCurrentPass, got %v", err)
 	}
 }

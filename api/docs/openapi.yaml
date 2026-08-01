@@ -585,16 +585,21 @@ paths:
               properties:
                 user_id:
                   type: string
+                current_password:
+                  type: string
                 new_password:
                   type: string
               required:
                 - user_id
+                - current_password
                 - new_password
       responses:
         '200':
           description: Password changed successfully
+        '400':
+          description: Invalid request or weak password
         '401':
-          description: Unauthorized
+          description: Unauthorized or invalid current password
         '403':
           description: Password change required
 

@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Changed
 - Restore page: DB/File restore checkboxes now render only after a snapshot is selected, styled to match the UI (indigo gradient check mark).
 - Restore page: snapshot select shows a loading spinner while backups are fetched instead of flashing "No backups available".
+- System page: removed the redundant status stat cards (already shown on the Dashboard); the page now focuses on host and container metrics.
 
 ### Fixed
 - Upgrade page: healthcheck URL field is now pre-filled from the selected site's `healthcheck_url` configuration.

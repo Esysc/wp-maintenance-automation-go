@@ -3,14 +3,6 @@ import { Link } from 'react-router-dom'
 import { apiGet } from '../api/client'
 import { useLanguage } from '../context/LanguageContext'
 
-interface StatusData {
-  server: string
-  sites: number
-  backups: number
-  snapshots: number
-  uptime: number
-}
-
 interface MetricContainer {
   name: string
   image: string
@@ -112,23 +104,16 @@ function Meter({ label, percent, detail }: { label: string; percent: number; det
 }
 
 export default function System() {
-  const [status, setStatus] = useState<StatusData | null>(null)
   const [metrics, setMetrics] = useState<MetricsData | null>(null)
   const [metricsRaw, setMetricsRaw] = useState('')
   const inFlight = useRef(false)
   const { t } = useLanguage()
 
   useEffect(() => {
-    loadStatus()
     loadMetrics()
     const id = setInterval(loadMetrics, 10000)
     return () => clearInterval(id)
   }, [])
-
-  async function loadStatus() {
-    const sr = await apiGet('/api/v1/status')
-    if (sr.success && sr.data) setStatus(sr.data as StatusData)
-  }
 
   async function loadMetrics() {
     if (inFlight.current) return
@@ -156,25 +141,6 @@ export default function System() {
   return (
     <>
       <header className="page-header"><h1>{t('page_title_system')}</h1></header>
-
-      <div className="stats-grid">
-        <div className="stat-card">
-          <h3>{t('label_server')}</h3>
-          <p className="stat-value">{status?.server || '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_sites')}</h3>
-          <p className="stat-value">{status?.sites ?? '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_backups')}</h3>
-          <p className="stat-value">{status?.backups ?? '-'}</p>
-        </div>
-        <div className="stat-card">
-          <h3>{t('status_snapshots')}</h3>
-          <p className="stat-value">{status?.snapshots ?? '-'}</p>
-        </div>
-      </div>
 
       <div className="card">
         <h3>{t('system_host_metrics')}</h3>

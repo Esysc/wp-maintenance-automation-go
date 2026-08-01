@@ -178,6 +178,8 @@ Key environment variables (see `.env.example`):
 | `WEB_TLS_DISABLE` | `false` | Disable Web TLS |
 | `WP_MAINTENANCE_TOKEN` | - | Pre-shared token for web->API auth |
 | `WP_MAINTENANCE_DOMAIN` | `localhost` | Domain for Caddy / Let's Encrypt |
+| `WP_MAINTENANCE_HOSTS` | - | Extra Caddy site address (e.g. your LAN IP `192.168.1.116`) to serve HTTPS on in addition to the domain |
+| `WP_MAINTENANCE_DEFAULT_SNI` | `localhost` | TLS SNI used for IP/SNI-less connections; defaults to `WP_MAINTENANCE_HOSTS` so IP access serves the right cert |
 
 ### Restic Repository Formats
 
@@ -213,6 +215,8 @@ Each WordPress site is configured through the Web UI and stored in the database 
 - **No domain set** (`WP_MAINTENANCE_DOMAIN` empty): Caddy uses self-signed certificates via `tls internal` — suitable for local development.
 - **Domain set** (`WP_MAINTENANCE_DOMAIN=example.com`): Caddy automatically provisions Let's Encrypt certificates for your domain.
 - HTTP on port 80 redirects to HTTPS on port 443 automatically.
+- **Accessing via LAN IP**: set `WP_MAINTENANCE_HOSTS=<your-ip>` (e.g. `WP_MAINTENANCE_HOSTS=192.168.1.116 docker compose up -d`) so Caddy issues a certificate for that IP. Browsers don't send SNI for IP addresses, so `WP_MAINTENANCE_DEFAULT_SNI` is set to that IP automatically to serve the matching certificate.
+- Certificates are issued by Caddy's internal CA (root at `caddy_data/caddy/pki/authorities/local/root.crt`). To avoid browser warnings, trust that root certificate on each client machine (or use a real domain for Let's Encrypt).
 
 ## Staging Rehearsal
 

@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [Unreleased]
 
 ### Changed
+- Caddy: HTTPS now also works when accessing the UI via a LAN IP. Added `WP_MAINTENANCE_HOSTS` to list an extra site address (e.g. `192.168.1.116`) and `WP_MAINTENANCE_DEFAULT_SNI` (defaults to that host) so Caddy serves the correct certificate to SNI-less/IP connections, which previously failed with `ERR_SSL_PROTOCOL_ERROR`.
 - Restore page: DB/File restore checkboxes now render only after a snapshot is selected, styled to match the UI (indigo gradient check mark).
 - Restore page: snapshot select shows a loading spinner while backups are fetched instead of flashing "No backups available".
 - System page: removed the redundant status stat cards (already shown on the Dashboard); the page now focuses on host and container metrics.

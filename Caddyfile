@@ -1,4 +1,8 @@
-{$WP_MAINTENANCE_DOMAIN:localhost} {
+{
+    default_sni {$WP_MAINTENANCE_DEFAULT_SNI:localhost}
+}
+
+{$WP_MAINTENANCE_DOMAIN:localhost} {$WP_MAINTENANCE_HOSTS:} {
     tls internal
     reverse_proxy web:8080
 }

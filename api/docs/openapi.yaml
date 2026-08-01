@@ -24,8 +24,8 @@ info:
     url: https://github.com/andreacristalli/wp-maintenance-automation-go
 
 servers:
-  - url: https://localhost:8081
-    description: Development server (HTTPS with self-signed cert)
+  - url: /
+    description: Same origin as the docs page; /api/v1 is proxied to the API server, so Try it out works without CORS or certificate issues
 
 security:
   - bearerAuth: []

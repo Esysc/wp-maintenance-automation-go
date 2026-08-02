@@ -1,5 +1,9 @@
 # WP Maintenance Automation Go
 
+<p align="center">
+  <img src="assets/demo.gif" alt="WP Maintenance Automation demo" width="720" />
+</p>
+
 A modern, secure WordPress site maintenance toolkit using Go. This project provides automated backups, upgrades, and restoration capabilities with comprehensive health checks and rollback functionality.
 
 ## Overview

@@ -61,13 +61,19 @@ export default function Sandbox() {
   }, [status?.site_id, status?.running])
 
   async function loadBackups(siteId: string) {
-    const res = await apiGet<Backup[]>('/api/v1/backups?site_id=' + siteId)
-    if (res.success && res.data) {
-      const list = Array.isArray(res.data) ? res.data : []
-      setBackups(list)
-      if (list.length > 0 && !selectedSnapshot) {
-        setSelectedSnapshot(list[0].snapshot_id)
+    try {
+      const res = await apiGet<Backup[]>('/api/v1/backups?site_id=' + siteId)
+      if (res.success && res.data) {
+        const list = Array.isArray(res.data) ? res.data : []
+        setBackups(list)
+        if (list.length > 0 && !selectedSnapshot) {
+          setSelectedSnapshot(list[0].snapshot_id)
+        }
+      } else if (res.error) {
+        toast(res.error, 'error')
       }
+    } catch (e: any) {
+      toast(e.message || 'Failed to load backups', 'error')
     }
   }
 

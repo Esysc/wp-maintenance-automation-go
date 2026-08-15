@@ -840,7 +840,7 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 
 	sshOpts := ssh.NewSSHOptions(req.SSHHost, req.SSHUser, req.SSHPort)
 	sshOpts.Key = req.SSHKey
-	sshClient := ssh.NewClient(sshOpts)
+	sshClient := s.newSSHClient(sshOpts)
 	defer sshClient.Close()
 
 	wpRoot := req.WPRoot

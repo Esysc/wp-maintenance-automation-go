@@ -147,7 +147,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
 	sshOpts.Key = site.WPSSHKey
-	sshClient := ssh.NewClient(sshOpts)
+	sshClient := s.newSSHClient(sshOpts)
 	defer sshClient.Close()
 
 	wpRoot := site.WPRoot
@@ -248,7 +248,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 		fileCount := 0
 		rsyncExcludes := []string{"wp-content/cache/"}
-		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false, func(relPath string) {
+		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", true, rsyncExcludes, false, func(relPath string) {
 			fileCount++
 			pct := 60
 			if totalFiles > 0 {
@@ -474,7 +474,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 			fileCount := 0
 			rsyncExcludes := []string{"wp-content/cache/"}
-			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true, func(relPath string) {
+			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", false, rsyncExcludes, true, func(relPath string) {
 				fileCount++
 				pct := 75
 				if totalFiles > 0 {

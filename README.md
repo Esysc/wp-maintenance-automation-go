@@ -13,9 +13,10 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - **Secure Backups**: Encrypted, deduplicated backups using restic integration
 - **Automated Upgrades**: WordPress core, plugins, themes, and database upgrades with health checks
 - **Automatic Rollback**: Automatic rollback on upgrade failure
+- **Sandbox Disaster Drills**: Start a production-like local WordPress site from Docker, run real backup/restore through the SSH + restic pipeline, intentionally break it, and restore it to verify the recovery workflow end-to-end
 - **Staging Rehearsal**: Ephemeral Docker-based staging — spins up a local WordPress + MariaDB stack from a backup snapshot, runs the full upgrade, healthchecks it, then destroys the environment on success (keeps it on failure for debugging)
-- **RESTful API**: API endpoints for backup, upgrade, restore, staging, jobs, and metrics
-- **Web Interface**: Modern web UI for monitoring and managing WordPress sites
+- **RESTful API**: API endpoints for backup, upgrade, restore, staging, sandbox drills, jobs, and metrics
+- **Web Interface**: Modern web UI for monitoring and managing WordPress sites, including the Sandbox disaster-recovery page
 - **Docker Host Metrics**: Live host CPU/memory/disk and per-container stats on the System page, via Docker host info or an optional host agent
 - **CLI Client**: Command-line interface for scripting and automation
 - **Multi-language UI**: 9 languages (EN, FR, IT, ES, PT, ZH, JA, KO, RU)
@@ -28,6 +29,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - Database dump and file synchronization
 - Encrypted backup storage with retention policies
 - Automated WordPress version upgrades
+- Local sandbox disaster drills for real backup/restore validation
 - Comprehensive health checks
 - One-click rollback capabilities
 
@@ -150,6 +152,39 @@ make test       # Run tests
 make lint       # Run linter
 make clean      # Clean build artifacts
 ```
+
+## Sandbox Disaster Drill
+
+Use the sandbox to practice a real disaster-recovery flow against a local production-like WordPress site without affecting a live server.
+
+### Quickstart
+
+1. Start the app:
+
+```bash
+make dev
+```
+
+2. Open the web UI and go to the Sandbox page.
+3. Click "Start sandbox". This spins up a Docker WordPress + MariaDB environment and registers it as a normal site.
+4. Click "Take backup" to create a real restic snapshot of the site files and database.
+5. Confirm the drill and click "Break the site now" to simulate a destructive failure.
+6. Select the latest snapshot and click "Restore site" to restore both files and the database.
+7. Verify the sandbox is healthy again and then stop it when finished.
+
+This exercises the same SSH + restic + database restore path used in production, but against a local disposable site.
+
+The sandbox also exposes a simple API flow:
+
+```bash
+POST /api/v1/sandbox/start
+POST /api/v1/backup
+POST /api/v1/sandbox/break
+POST /api/v1/restore
+POST /api/v1/sandbox/stop
+```
+
+The production-like drill is intended for validation and recovery testing, not as a replacement for real environment checks.
 
 ## Configuration
 

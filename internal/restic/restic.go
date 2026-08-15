@@ -98,9 +98,15 @@ func tryParseSnapshot(output string, tags []string) *Snapshot {
 		return nil
 	}
 
+	shortID := backupResult.SnapshotID
+	if len(shortID) > 8 {
+		shortID = shortID[:8]
+	}
+
 	return &Snapshot{
-		ID:   backupResult.SnapshotID,
-		Tags: tags,
+		ID:      backupResult.SnapshotID,
+		ShortID: shortID,
+		Tags:    tags,
 	}
 }
 

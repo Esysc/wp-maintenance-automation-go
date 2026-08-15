@@ -29,22 +29,42 @@ func NewSSHOptions(host, user string, port int) *SSHOptions {
 	return &SSHOptions{Host: host, User: user, Port: port}
 }
 
-type Client struct {
+// Client is the interface used by the job pipeline and API handlers to
+// interact with a remote WordPress host. The concrete *SSHClient talks over
+// SSH; tests may inject a fake implementation backed by local directories.
+type Client interface {
+	Close() error
+	DSN() string
+	RunCommand(cmd string) (string, error)
+	RunCommandRaw(cmd string) string
+	FileExists(remotePath string) (bool, error)
+	CommandExists(cmd string) (bool, error)
+	DetectWPRoot() (string, error)
+	GetWpVersion(wpRoot string) (string, error)
+	ParseDBConfig(wpRoot string) (string, string, string, string, error)
+	DownloadFile(remotePath, localPath string) error
+	UploadFile(localPath, remotePath string) error
+	SyncDir(sourceDir, destDir string, sourceIsRemote bool, excludes []string, delete bool, onFile func(string)) error
+	CountRemoteFiles(dir string) (int, error)
+	RemoveRemoteFile(remotePath string) error
+}
+
+type SSHClient struct {
 	opts      *SSHOptions
 	conn      *ssh.Client
 	sftpConn  *sftp.Client
 	connected bool
 }
 
-func NewClient(opts *SSHOptions) *Client {
-	return &Client{opts: opts}
+func NewClient(opts *SSHOptions) *SSHClient {
+	return &SSHClient{opts: opts}
 }
 
-func (c *Client) DSN() string {
+func (c *SSHClient) DSN() string {
 	return fmt.Sprintf("%s@%s", c.opts.User, c.opts.Host)
 }
 
-func (c *Client) connect() error {
+func (c *SSHClient) connect() error {
 	if c.connected {
 		return nil
 	}
@@ -71,7 +91,7 @@ func (c *Client) connect() error {
 	return nil
 }
 
-func (c *Client) authMethods() []ssh.AuthMethod {
+func (c *SSHClient) authMethods() []ssh.AuthMethod {
 	var methods []ssh.AuthMethod
 
 	if c.opts.Key != "" {
@@ -103,7 +123,7 @@ func (c *Client) authMethods() []ssh.AuthMethod {
 	return methods
 }
 
-func (c *Client) getSFTP() (*sftp.Client, error) {
+func (c *SSHClient) getSFTP() (*sftp.Client, error) {
 	if c.sftpConn != nil {
 		return c.sftpConn, nil
 	}
@@ -118,7 +138,7 @@ func (c *Client) getSFTP() (*sftp.Client, error) {
 	return sftpConn, nil
 }
 
-func (c *Client) Close() error {
+func (c *SSHClient) Close() error {
 	if c.sftpConn != nil {
 		c.sftpConn.Close()
 		c.sftpConn = nil
@@ -129,7 +149,7 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) RunCommand(cmd string) (string, error) {
+func (c *SSHClient) RunCommand(cmd string) (string, error) {
 	if err := c.connect(); err != nil {
 		return "", err
 	}
@@ -146,7 +166,7 @@ func (c *Client) RunCommand(cmd string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func (c *Client) RunCommandRaw(cmd string) string {
+func (c *SSHClient) RunCommandRaw(cmd string) string {
 	out, err := c.RunCommand(cmd)
 	if err != nil {
 		return fmt.Sprintf("ERROR: %v", err)
@@ -154,7 +174,7 @@ func (c *Client) RunCommandRaw(cmd string) string {
 	return out
 }
 
-func (c *Client) RunCommandWithEnv(cmd string, env []string) (string, error) {
+func (c *SSHClient) RunCommandWithEnv(cmd string, env []string) (string, error) {
 	if err := c.connect(); err != nil {
 		return "", err
 	}
@@ -178,7 +198,7 @@ func (c *Client) RunCommandWithEnv(cmd string, env []string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
-func (c *Client) FileExists(remotePath string) (bool, error) {
+func (c *SSHClient) FileExists(remotePath string) (bool, error) {
 	output, err := c.RunCommand(fmt.Sprintf("test -f '%s' && echo 'exists'", remotePath))
 	if err != nil {
 		return false, nil
@@ -186,7 +206,7 @@ func (c *Client) FileExists(remotePath string) (bool, error) {
 	return strings.TrimSpace(output) == "exists", nil
 }
 
-func (c *Client) CommandExists(cmd string) (bool, error) {
+func (c *SSHClient) CommandExists(cmd string) (bool, error) {
 	output, err := c.RunCommand(fmt.Sprintf("command -v %s", cmd))
 	if err != nil {
 		return false, nil
@@ -194,26 +214,26 @@ func (c *Client) CommandExists(cmd string) (bool, error) {
 	return strings.TrimSpace(output) != "", nil
 }
 
-func (c *Client) ReadRemoteFile(remotePath string) (string, error) {
+func (c *SSHClient) ReadRemoteFile(remotePath string) (string, error) {
 	return c.RunCommand(fmt.Sprintf("cat '%s'", remotePath))
 }
 
-func (c *Client) WriteRemoteFile(remotePath, content string) error {
+func (c *SSHClient) WriteRemoteFile(remotePath, content string) error {
 	cmd := fmt.Sprintf("cat > '%s' << 'EOF'\n%s\nEOF", remotePath, content)
 	_, err := c.RunCommand(cmd)
 	return err
 }
 
-func (c *Client) RemoveRemoteFile(remotePath string) error {
+func (c *SSHClient) RemoveRemoteFile(remotePath string) error {
 	_, err := c.RunCommand(fmt.Sprintf("rm -f '%s'", remotePath))
 	return err
 }
 
-func (c *Client) WPCLI(wpRoot, args string) (string, error) {
+func (c *SSHClient) WPCLI(wpRoot, args string) (string, error) {
 	return c.RunCommand(fmt.Sprintf("cd '%s' && %s %s", wpRoot, "wp", args))
 }
 
-func (c *Client) GetWpVersion(wpRoot string) (string, error) {
+func (c *SSHClient) GetWpVersion(wpRoot string) (string, error) {
 	ver, err := c.WPCLI(wpRoot, "core version")
 	if err == nil {
 		ver = strings.TrimSpace(ver)
@@ -252,7 +272,7 @@ func parseWpVersion(content string) string {
 	return ""
 }
 
-func (c *Client) ParseDBConfig(wpRoot string) (string, string, string, string, error) {
+func (c *SSHClient) ParseDBConfig(wpRoot string) (string, string, string, string, error) {
 	out, err := c.RunCommand(fmt.Sprintf(
 		"grep -E \"^define\\([[:space:]]*'DB_(NAME|USER|PASSWORD|HOST)'\" '%s/wp-config.php'", wpRoot,
 	))
@@ -272,7 +292,7 @@ func (c *Client) ParseDBConfig(wpRoot string) (string, string, string, string, e
 	return dbName, dbUser, dbPass, dbHost, nil
 }
 
-func (c *Client) parseDBConfigViaWPCLI(wpRoot string) (string, string, string, string, error) {
+func (c *SSHClient) parseDBConfigViaWPCLI(wpRoot string) (string, string, string, string, error) {
 	out, err := c.RunCommand(fmt.Sprintf(
 		"cd '%s' && wp config get --type=constant DB_NAME DB_USER DB_PASSWORD DB_HOST 2>/dev/null", wpRoot,
 	))
@@ -291,34 +311,32 @@ func (c *Client) parseDBConfigViaWPCLI(wpRoot string) (string, string, string, s
 func parseDefineValue(content, key string) string {
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
-		if strings.Contains(line, fmt.Sprintf("'%s'", key)) {
-			line = strings.TrimSpace(line)
+		if !strings.Contains(line, fmt.Sprintf("'%s'", key)) {
+			continue
+		}
 
-			prefix := fmt.Sprintf("define('%s',", key)
-			idx := strings.Index(line, prefix)
-			if idx == -1 {
-				prefix = fmt.Sprintf("define( '%s' ,", key)
-				idx = strings.Index(line, prefix)
-			}
-			if idx == -1 {
-				continue
-			}
+		// Locate the key argument, then take the value from the next
+		// quoted argument after the comma, regardless of surrounding
+		// whitespace (handles define('KEY', 'v'), define( 'KEY', 'v' ),
+		// define( 'KEY' , 'v' ), etc.).
+		keyIdx := strings.Index(line, fmt.Sprintf("'%s'", key))
+		commaIdx := strings.Index(line[keyIdx:], ",")
+		if commaIdx == -1 {
+			continue
+		}
+		valPart := strings.TrimSpace(line[keyIdx+commaIdx+1:])
 
-			valPart := line[idx+len(prefix):]
-			valPart = strings.TrimSpace(valPart)
-
-			if strings.HasPrefix(valPart, "'") {
-				end := strings.Index(valPart[1:], "'")
-				if end >= 0 {
-					return valPart[1 : 1+end]
-				}
+		if strings.HasPrefix(valPart, "'") {
+			end := strings.Index(valPart[1:], "'")
+			if end >= 0 {
+				return valPart[1 : 1+end]
 			}
 		}
 	}
 	return ""
 }
 
-func (c *Client) UploadFile(localPath, remotePath string) error {
+func (c *SSHClient) UploadFile(localPath, remotePath string) error {
 	sf, err := c.getSFTP()
 	if err != nil {
 		return err
@@ -346,7 +364,7 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 	return nil
 }
 
-func (c *Client) DownloadFile(remotePath, localPath string) error {
+func (c *SSHClient) DownloadFile(remotePath, localPath string) error {
 	sf, err := c.getSFTP()
 	if err != nil {
 		return err
@@ -374,14 +392,7 @@ func (c *Client) DownloadFile(remotePath, localPath string) error {
 	return nil
 }
 
-func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bool, onFile func(string)) error {
-	sourceIsRemote := !isLocalPath(sourceDir)
-	destIsRemote := !isLocalPath(destDir)
-
-	if sourceIsRemote == destIsRemote {
-		return fmt.Errorf("SyncDir requires one local and one remote path")
-	}
-
+func (c *SSHClient) SyncDir(sourceDir, destDir string, sourceIsRemote bool, excludes []string, delete bool, onFile func(string)) error {
 	if err := c.connect(); err != nil {
 		return err
 	}
@@ -409,7 +420,7 @@ func (c *Client) SyncDir(sourceDir, destDir string, excludes []string, delete bo
 	return c.uploadTar(sourceDir, destDir, isExcluded, delete, onFile)
 }
 
-func (c *Client) downloadTar(sourceDir, destDir string, isExcluded func(string) bool, onFile func(string)) error {
+func (c *SSHClient) downloadTar(sourceDir, destDir string, isExcluded func(string) bool, onFile func(string)) error {
 	session, err := c.conn.NewSession()
 	if err != nil {
 		return err
@@ -479,7 +490,7 @@ func (c *Client) downloadTar(sourceDir, destDir string, isExcluded func(string) 
 	return session.Wait()
 }
 
-func (c *Client) uploadTar(sourceDir, destDir string, isExcluded func(string) bool, delete bool, onFile func(string)) error {
+func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string) bool, delete bool, onFile func(string)) error {
 	if _, err := c.RunCommand(fmt.Sprintf("mkdir -p %s", shellQuote(destDir))); err != nil {
 		return fmt.Errorf("cannot create remote directory: %w", err)
 	}
@@ -601,7 +612,7 @@ func isLocalPath(p string) bool {
 	return err == nil
 }
 
-func (c *Client) CountRemoteFiles(dir string) (int, error) {
+func (c *SSHClient) CountRemoteFiles(dir string) (int, error) {
 	out, err := c.RunCommand(fmt.Sprintf("find %s -type f 2>/dev/null | wc -l", shellQuote(dir)))
 	if err != nil {
 		return 0, err
@@ -611,7 +622,7 @@ func (c *Client) CountRemoteFiles(dir string) (int, error) {
 	return count, nil
 }
 
-func (c *Client) DetectWPRoot() (string, error) {
+func (c *SSHClient) DetectWPRoot() (string, error) {
 	homeDir := c.detectHomeDir()
 
 	commonPaths := []string{
@@ -656,7 +667,7 @@ func (c *Client) DetectWPRoot() (string, error) {
 	return "", fmt.Errorf("could not find WordPress installation on remote host")
 }
 
-func (c *Client) detectHomeDir() string {
+func (c *SSHClient) detectHomeDir() string {
 	for _, cmd := range []string{
 		"cd ~ && pwd",
 		"echo ~",

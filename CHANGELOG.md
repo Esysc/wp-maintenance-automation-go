@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- Production-like sandbox drill support for validating backup and restore workflows against a real WordPress stack running locally via Docker.
+- New sandbox API endpoints under `/api/v1/sandbox` for starting, checking, breaking, restoring, and stopping the local test site.
+- Sandbox page in the web UI to exercise the full end-to-end backup/restore disaster drill without touching a live production server.
+- E2E fake-production restore tests that seed a realistic WordPress installation, back it up through the real SSH + restic pipeline, intentionally break it, and verify the restore exactly matches the original state.
+- Real restic snapshot validation in the sandbox flow, using actual repository creation, backup snapshots, and restore operations instead of mocked backup metadata.
+
+### Changed
+- README feature overview and core capability list now document the sandbox disaster-drill workflow alongside staging rehearsal and restore flows.
+
+### Fixed
+- Database layer now supports both PostgreSQL production DSNs and SQLite test file paths, including the schema migration checks used in unit tests.
+- Fake SSH test client and restore job logic were aligned with the real `ssh.Client` interface (`SyncDir` signature and source/destination direction handling), allowing the end-to-end fake-production restore drill to compile and pass reliably.
+- Restic backup parsing is more resilient: successful snapshot output is parsed back into a snapshot ID so the backup/restore workflow can continue even when the CLI emits opportunistic output beyond the strict JSON payload.
+
 ## [0.4.0] - 2026-08-01
 
 ### Changed

@@ -25,6 +25,7 @@ type WebServer struct {
 	apiBaseURL string
 	apiToken   string
 	client     *http.Client
+	longClient *http.Client
 	staticDir  string
 }
 
@@ -49,6 +50,12 @@ func Run() {
 		apiToken:   os.Getenv("WP_MAINTENANCE_TOKEN"),
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
+		longClient: &http.Client{
+			Timeout: 15 * time.Minute,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
@@ -98,6 +105,8 @@ func Run() {
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
+	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleAPISandbox))
+	mux.HandleFunc("/api/v1/sandbox/", s.authMiddleware(s.handleAPISandbox))
 	mux.HandleFunc("/api/v1/metrics", s.authMiddleware(s.handleAPIMetrics))
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
@@ -439,7 +448,7 @@ func (s *WebServer) proxyAuth(apiReq *http.Request, r *http.Request) {
 	}
 }
 
-func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {
+func (s *WebServer) proxyRequestWithClient(w http.ResponseWriter, r *http.Request, path string, client *http.Client) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -456,7 +465,7 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 
 	s.proxyAuth(apiReq, r)
 
-	resp, err := s.client.Do(apiReq)
+	resp, err := client.Do(apiReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -467,6 +476,10 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
+}
+
+func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {
+	s.proxyRequestWithClient(w, r, path, s.client)
 }
 
 func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, basePath, id string) {
@@ -497,6 +510,13 @@ func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, b
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
+}
+
+func (s *WebServer) handleAPISandbox(w http.ResponseWriter, r *http.Request) {
+	// Preserve the full path (status/start/break/stop) and use a long-timeout
+	// client because starting the sandbox can take minutes (Docker image
+	// build on first run).
+	s.proxyRequestWithClient(w, r, r.URL.Path, s.longClient)
 }
 
 func (s *WebServer) handleUISPA(w http.ResponseWriter, r *http.Request) {

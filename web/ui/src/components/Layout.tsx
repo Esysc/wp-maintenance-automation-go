@@ -12,6 +12,7 @@ const NAV_ITEMS = [
   { to: '/restore', key: 'nav_restore', icon: 'restore' },
   { to: '/upgrade', key: 'nav_upgrade', icon: 'upgrade' },
   { to: '/rehearsal', key: 'nav_rehearsal', icon: 'rehearsal' },
+  { to: '/sandbox', key: 'nav_sandbox', icon: 'sandbox' },
   { to: '/snapshots', key: 'nav_snapshots', icon: 'snapshots' },
   { to: '/users', key: 'nav_users', icon: 'users' },
   { to: '/tokens', key: 'nav_tokens', icon: 'tokens' },

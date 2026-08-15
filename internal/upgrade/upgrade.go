@@ -44,7 +44,7 @@ type UpgradeReport struct {
 }
 
 type UpgradeManager struct {
-	sshClient        *ssh.Client
+	sshClient        ssh.Client
 	wpRoot           string
 	healthcheckURL   string
 	autoRollback     bool
@@ -58,7 +58,7 @@ type UpgradeManager struct {
 }
 
 type UpgradeOptions struct {
-	SSHClient        *ssh.Client
+	SSHClient        ssh.Client
 	WPRoot           string
 	HealthcheckURL   string
 	AutoRollback     bool

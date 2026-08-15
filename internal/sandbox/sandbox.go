@@ -459,6 +459,19 @@ func (m *Manager) wpArgs(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func (m *Manager) wpArgsRetry(args ...string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		out, err := m.wpArgs(args...)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+	}
+	return "", lastErr
+}
+
 func (m *Manager) wpVersion() string {
 	if !m.isRunning() {
 		return ""
@@ -502,9 +515,15 @@ func (m *Manager) setupWordPress(st *State) error {
 		return fmt.Errorf("failed to install WordPress: %w", err)
 	}
 
-	m.wpArgs("option", "update", "siteurl", st.HealthURL)
-	m.wpArgs("option", "update", "home", st.HealthURL)
-	m.wpArgs("rewrite", "structure", "/%postname%/")
+	if _, err := m.wpArgsRetry("option", "update", "siteurl", st.HealthURL); err != nil {
+		return fmt.Errorf("failed to update siteurl: %w", err)
+	}
+	if _, err := m.wpArgsRetry("option", "update", "home", st.HealthURL); err != nil {
+		return fmt.Errorf("failed to update home url: %w", err)
+	}
+	if _, err := m.wpArgsRetry("rewrite", "structure", "/%postname%/"); err != nil {
+		return fmt.Errorf("failed to configure permalink structure: %w", err)
+	}
 
 	posts := []struct{ title, content string }{
 		{"Welcome to the local sandbox", "This production-like test site is used for backup and restore drills."},
@@ -512,11 +531,15 @@ func (m *Manager) setupWordPress(st *State) error {
 		{"Backup and restore round trip", "Backup -> break -> restore -> verify. Everything should be exactly as before."},
 	}
 	for _, p := range posts {
-		m.wpArgs("post", "create", "--post_type=post", "--post_status=publish",
-			"--post_title="+p.title, "--post_content="+p.content)
+		if _, err := m.wpArgsRetry("post", "create", "--post_type=post", "--post_status=publish",
+			"--post_title="+p.title, "--post_content="+p.content); err != nil {
+			return fmt.Errorf("failed to seed sandbox post %q: %w", p.title, err)
+		}
 	}
-	m.wpArgs("post", "create", "--post_type=page", "--post_status=publish",
-		"--post_title=About the sandbox", "--post_content=Test page created during sandbox provisioning.")
+	if _, err := m.wpArgsRetry("post", "create", "--post_type=page", "--post_status=publish",
+		"--post_title=About the sandbox", "--post_content=Test page created during sandbox provisioning."); err != nil {
+		return fmt.Errorf("failed to seed sandbox page: %w", err)
+	}
 
 	if out, err := m.compose("exec", "-T", "wp", "bash", "-c",
 		`mkdir -p /var/www/html/wp-content/uploads/2026/08 && printf '\377\330\377\340 sandbox-photo' > /var/www/html/wp-content/uploads/2026/08/photo.jpg && chown -R www-data:www-data /var/www/html/wp-content/uploads`); err != nil {

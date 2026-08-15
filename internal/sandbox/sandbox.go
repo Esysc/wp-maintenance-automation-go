@@ -333,7 +333,9 @@ func (m *Manager) Break() (*Status, error) {
 
 	st.Broken = true
 	st.LastAction = "broken"
-	m.saveState(st)
+	if err := m.saveState(st); err != nil {
+		return nil, fmt.Errorf("failed to save sandbox state after break: %w", err)
+	}
 	log.Printf("sandbox: site intentionally broken (files and database destroyed)")
 
 	return m.Status(), nil
@@ -385,7 +387,9 @@ func (m *Manager) Stop() error {
 	if st := m.loadState(); st != nil {
 		st.Broken = false
 		st.LastAction = "stopped"
-		m.saveState(st)
+		if err := m.saveState(st); err != nil {
+			return fmt.Errorf("failed to save sandbox state after stop: %w", err)
+		}
 	}
 	log.Printf("sandbox: stopped")
 	return nil
@@ -649,7 +653,11 @@ func parsePort(s string) int {
 }
 
 func mustRead(path string) string {
-	data, _ := os.ReadFile(path)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		log.Printf("error reading file %s: %v", path, err)
+		return ""
+	}
 	return strings.TrimSpace(string(data))
 }
 

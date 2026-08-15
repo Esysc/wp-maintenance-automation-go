@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - Production-like sandbox drill support for validating backup and restore workflows against a real WordPress stack running locally via Docker.
-- New sandbox API endpoints under `/api/v1/sandbox` for starting, checking, breaking, restoring, and stopping the local test site.
+- New sandbox API endpoints under `/api/v1/sandbox` for starting, checking, breaking, and stopping the local test site (backup/restore use `/api/v1/backup` and `/api/v1/restore`).
 - Sandbox page in the web UI to exercise the full end-to-end backup/restore disaster drill without touching a live production server.
 - E2E fake-production restore tests that seed a realistic WordPress installation, back it up through the real SSH + restic pipeline, intentionally break it, and verify the restore exactly matches the original state.
 - Real restic snapshot validation in the sandbox flow, using actual repository creation, backup snapshots, and restore operations instead of mocked backup metadata.

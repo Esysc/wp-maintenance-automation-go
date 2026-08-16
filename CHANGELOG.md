@@ -6,15 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-08-16
+
 ### Added
 - Rehearsal stop now supports an explicit force-cleanup checkbox so the UI can hard-remove leftover staging containers when a normal compose shutdown is not enough.
+- Rehearsal now compares the normalized production homepage with the rehearsal homepage after the upgrade healthcheck, so host/domain differences are ignored but real content drift is detected.
 
 ### Changed
 - Rehearsal stop now clears stored rehearsal metadata after a successful cleanup, so inactive rehearsals no longer keep showing stale environment details.
 - Rehearsal stop handling now fails closed if cleanup does not actually tear down the containers, instead of reporting a false success.
+- The Rehearsal page now keeps the start section hidden while a rehearsal is queued, starting, or active, so it no longer reappears mid-run.
 
 ### Fixed
 - Rehearsal stop and active-state polling now stay in sync with the stored job state, preventing the UI from showing an already-stopped rehearsal as still running.
+- Rehearsal now records the production-vs-rehearsal homepage comparison as part of the upgrade flow, instead of relying on a basic availability check alone.
 - WP-CLI readiness and inventory probes were hardened to use valid commands and quieter execution flags, reducing noisy warnings during rehearsal startup.
 
 ## [0.5.1] - 2026-08-16

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -54,6 +55,7 @@ type SSHClient struct {
 	conn      *ssh.Client
 	sftpConn  *sftp.Client
 	connected bool
+	authErr   error
 }
 
 func NewClient(opts *SSHOptions) *SSHClient {
@@ -81,6 +83,13 @@ func (c *SSHClient) connect() error {
 		Timeout:         defaultConnectTimeout,
 	}
 
+	if c.authErr != nil {
+		return c.authErr
+	}
+	if len(config.Auth) == 0 {
+		return fmt.Errorf("SSH connection failed: no authentication methods available")
+	}
+
 	conn, err := ssh.Dial("tcp", addr, config)
 	if err != nil {
 		return fmt.Errorf("SSH connection failed: %w", err)
@@ -93,12 +102,35 @@ func (c *SSHClient) connect() error {
 
 func (c *SSHClient) authMethods() []ssh.AuthMethod {
 	var methods []ssh.AuthMethod
+	c.authErr = nil
 
 	if c.opts.Key != "" {
-		if signer, err := ssh.ParsePrivateKey([]byte(c.opts.Key)); err == nil {
+		key := normalizeKeyMaterial(c.opts.Key)
+		if looksLikePublicKey(key) {
+			c.authErr = fmt.Errorf("SSH connection failed: provided ssh_key is a public key. Paste the PRIVATE key (BEGIN/END ... PRIVATE KEY)")
+			return nil
+		}
+		if signer, err := ssh.ParsePrivateKey([]byte(key)); err == nil {
 			methods = append(methods, ssh.PublicKeys(signer))
 			return methods
 		}
+
+		if keyFile := strings.TrimSpace(c.opts.Key); isLocalPath(keyFile) {
+			keyBytes, err := os.ReadFile(keyFile)
+			if err != nil {
+				c.authErr = fmt.Errorf("SSH connection failed: provided ssh_key path cannot be read: %s", keyFile)
+				return nil
+			}
+			if signer, err := ssh.ParsePrivateKey(keyBytes); err == nil {
+				methods = append(methods, ssh.PublicKeys(signer))
+				return methods
+			}
+			c.authErr = fmt.Errorf("SSH connection failed: provided ssh_key path is not a valid unencrypted private key: %s", keyFile)
+			return nil
+		}
+
+		c.authErr = fmt.Errorf("SSH connection failed: provided ssh_key is not a valid unencrypted private key")
+		return nil
 	}
 
 	if sock := os.Getenv("SSH_AUTH_SOCK"); sock != "" {
@@ -121,6 +153,30 @@ func (c *SSHClient) authMethods() []ssh.AuthMethod {
 	}
 
 	return methods
+}
+
+func normalizeKeyMaterial(key string) string {
+	trimmed := strings.TrimSpace(key)
+	if strings.Contains(trimmed, `\n`) && !strings.Contains(trimmed, "\n") {
+		trimmed = strings.ReplaceAll(trimmed, `\n`, "\n")
+	}
+	return strings.ReplaceAll(trimmed, "\r\n", "\n")
+}
+
+func looksLikePublicKey(s string) bool {
+	s = strings.TrimSpace(s)
+	for _, prefix := range []string{
+		"ssh-ed25519 ",
+		"ssh-rsa ",
+		"ecdsa-sha2-",
+		"sk-ssh-ed25519@openssh.com ",
+		"sk-ecdsa-sha2-nistp256@openssh.com ",
+	} {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *SSHClient) getSFTP() (*sftp.Client, error) {
@@ -273,64 +329,79 @@ func parseWpVersion(content string) string {
 }
 
 func (c *SSHClient) ParseDBConfig(wpRoot string) (string, string, string, string, error) {
-	out, err := c.RunCommand(fmt.Sprintf(
-		"grep -E \"^define\\([[:space:]]*'DB_(NAME|USER|PASSWORD|HOST)'\" '%s/wp-config.php'", wpRoot,
-	))
-	if err != nil {
-		return c.parseDBConfigViaWPCLI(wpRoot)
+	var readErrors []string
+	for _, cfgPath := range candidateWPConfigPaths(wpRoot) {
+		content, err := c.ReadRemoteFile(cfgPath)
+		if err != nil {
+			readErrors = append(readErrors, fmt.Sprintf("%s: %v", cfgPath, err))
+			continue
+		}
+
+		dbName := parseDefineValue(content, "DB_NAME")
+		dbUser := parseDefineValue(content, "DB_USER")
+		dbPass := parseDefineValue(content, "DB_PASSWORD")
+		dbHost := parseDefineValue(content, "DB_HOST")
+
+		if dbName != "" && dbUser != "" && dbHost != "" {
+			return dbName, dbUser, dbPass, dbHost, nil
+		}
+		readErrors = append(readErrors, fmt.Sprintf("%s: DB constants incomplete", cfgPath))
 	}
 
-	dbName := parseDefineValue(out, "DB_NAME")
-	dbUser := parseDefineValue(out, "DB_USER")
-	dbPass := parseDefineValue(out, "DB_PASSWORD")
-	dbHost := parseDefineValue(out, "DB_HOST")
-
-	if dbName == "" || dbUser == "" || dbPass == "" || dbHost == "" {
-		return c.parseDBConfigViaWPCLI(wpRoot)
+	dbName, dbUser, dbPass, dbHost, err := c.parseDBConfigViaWPCLI(wpRoot)
+	if err == nil {
+		return dbName, dbUser, dbPass, dbHost, nil
 	}
 
-	return dbName, dbUser, dbPass, dbHost, nil
+	if len(readErrors) > 0 {
+		return "", "", "", "", fmt.Errorf("could not parse DB config from wp-config.php (read attempts: %s; wp-cli: %v)", strings.Join(readErrors, " | "), err)
+	}
+	return "", "", "", "", err
+}
+
+func candidateWPConfigPaths(wpRoot string) []string {
+	cleanRoot := strings.TrimSpace(filepath.Clean(wpRoot))
+	parent := filepath.Dir(cleanRoot)
+	paths := []string{filepath.Join(cleanRoot, "wp-config.php")}
+	if parent != "." && parent != cleanRoot {
+		paths = append(paths, filepath.Join(parent, "wp-config.php"))
+	}
+	return paths
 }
 
 func (c *SSHClient) parseDBConfigViaWPCLI(wpRoot string) (string, string, string, string, error) {
-	out, err := c.RunCommand(fmt.Sprintf(
-		"cd '%s' && wp config get --type=constant DB_NAME DB_USER DB_PASSWORD DB_HOST 2>/dev/null", wpRoot,
-	))
-	if err != nil {
-		return "", "", "", "", fmt.Errorf("could not parse DB config from wp-config.php")
+	keys := []string{"DB_NAME", "DB_USER", "DB_PASSWORD", "DB_HOST"}
+	values := make([]string, 0, len(keys))
+
+	for _, key := range keys {
+		out, err := c.RunCommand(fmt.Sprintf(
+			"cd %s && wp config get %s --type=constant --quiet 2>/dev/null", shellQuote(wpRoot), key,
+		))
+		if err != nil {
+			return "", "", "", "", fmt.Errorf("could not parse DB config from wp-config.php")
+		}
+		values = append(values, strings.TrimSpace(out))
 	}
 
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if len(lines) < 4 {
-		return "", "", "", "", fmt.Errorf("unexpected WP-CLI output: %d lines", len(lines))
+	if values[0] == "" || values[1] == "" || values[3] == "" {
+		return "", "", "", "", fmt.Errorf("incomplete DB config values from WP-CLI")
 	}
 
-	return lines[0], lines[1], lines[2], lines[3], nil
+	return values[0], values[1], values[2], values[3], nil
 }
 
 func parseDefineValue(content, key string) string {
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if !strings.Contains(line, fmt.Sprintf("'%s'", key)) {
-			continue
-		}
+	quotedKey := regexp.QuoteMeta(key)
+	patterns := []string{
+		fmt.Sprintf(`(?m)define\(\s*['\"]%s['\"]\s*,\s*'([^']*)'\s*\)`, quotedKey),
+		fmt.Sprintf(`(?m)define\(\s*['\"]%s['\"]\s*,\s*"([^"]*)"\s*\)`, quotedKey),
+	}
 
-		// Locate the key argument, then take the value from the next
-		// quoted argument after the comma, regardless of surrounding
-		// whitespace (handles define('KEY', 'v'), define( 'KEY', 'v' ),
-		// define( 'KEY' , 'v' ), etc.).
-		keyIdx := strings.Index(line, fmt.Sprintf("'%s'", key))
-		commaIdx := strings.Index(line[keyIdx:], ",")
-		if commaIdx == -1 {
-			continue
-		}
-		valPart := strings.TrimSpace(line[keyIdx+commaIdx+1:])
-
-		if strings.HasPrefix(valPart, "'") {
-			end := strings.Index(valPart[1:], "'")
-			if end >= 0 {
-				return valPart[1 : 1+end]
-			}
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(pattern)
+		matches := re.FindStringSubmatch(content)
+		if len(matches) == 2 {
+			return strings.TrimSpace(matches[1])
 		}
 	}
 	return ""
@@ -608,7 +679,17 @@ func shellQuote(s string) string {
 }
 
 func isLocalPath(p string) bool {
-	_, err := os.Stat(filepath.Dir(p))
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return false
+	}
+	if strings.ContainsAny(p, "\n\r\t") {
+		return false
+	}
+	if !(strings.HasPrefix(p, "/") || strings.HasPrefix(p, "./") || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "~/") || strings.Contains(p, "/")) {
+		return false
+	}
+	_, err := os.Stat(p)
 	return err == nil
 }
 
@@ -623,9 +704,17 @@ func (c *SSHClient) CountRemoteFiles(dir string) (int, error) {
 }
 
 func (c *SSHClient) DetectWPRoot() (string, error) {
+	loginDir := c.detectLoginDir()
 	homeDir := c.detectHomeDir()
 
 	commonPaths := []string{
+		loginDir,
+		loginDir + "/html",
+		loginDir + "/public_html",
+		loginDir + "/www",
+		loginDir + "/htdocs",
+		loginDir + "/wordpress",
+		loginDir + "/wp",
 		homeDir,
 		homeDir + "/html",
 		homeDir + "/public_html",
@@ -648,10 +737,17 @@ func (c *SSHClient) DetectWPRoot() (string, error) {
 		if exists {
 			return p, nil
 		}
+		exists, _ = c.FileExists(filepath.Join(p, "wp-includes", "version.php"))
+		if exists {
+			return p, nil
+		}
 	}
 
-	for _, dir := range []string{homeDir, "/var", "/srv", "/opt", "/usr", "/home"} {
-		out, err := c.RunCommand(fmt.Sprintf("find %s -maxdepth 5 -type f -name wp-config.php 2>/dev/null || true", dir))
+	for _, dir := range []string{loginDir, homeDir, "/var", "/srv", "/opt", "/usr", "/home"} {
+		if strings.TrimSpace(dir) == "" {
+			continue
+		}
+		out, err := c.RunCommand(fmt.Sprintf("find %s -maxdepth 12 -type f \\( -name wp-config.php -o -path '*/wp-includes/version.php' \\) 2>/dev/null || true", shellQuote(dir)))
 		if err != nil {
 			continue
 		}
@@ -659,12 +755,28 @@ func (c *SSHClient) DetectWPRoot() (string, error) {
 		for _, line := range lines {
 			line = strings.TrimSpace(line)
 			if line != "" {
+				if strings.HasSuffix(line, "/wp-includes/version.php") {
+					return filepath.Dir(filepath.Dir(line)), nil
+				}
 				return filepath.Dir(line), nil
 			}
 		}
 	}
 
 	return "", fmt.Errorf("could not find WordPress installation on remote host")
+}
+
+func (c *SSHClient) detectLoginDir() string {
+	for _, cmd := range []string{
+		"pwd -P",
+		"pwd",
+	} {
+		out, err := c.RunCommand(cmd + " || true")
+		if err == nil && out != "" {
+			return strings.TrimSpace(out)
+		}
+	}
+	return ""
 }
 
 func (c *SSHClient) detectHomeDir() string {

@@ -848,7 +848,15 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 	sshClient := s.newSSHClient(sshOpts)
 	defer sshClient.Close()
 
-	wpRoot := req.WPRoot
+	if _, err := sshClient.RunCommand("pwd -P"); err != nil {
+		apiErr(w, http.StatusOK, "SSH preflight failed (connect/auth): "+err.Error())
+		return
+	}
+
+	wpRoot := strings.TrimSpace(req.WPRoot)
+	if wpRoot == "/" || wpRoot == "." {
+		wpRoot = ""
+	}
 	if wpRoot != "" {
 		dbName, dbUser, dbPass, dbHost, err := sshClient.ParseDBConfig(wpRoot)
 		if err == nil {
@@ -861,7 +869,9 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		log.Printf("ParseDBConfig error for wpRoot=%s: %v — trying auto-detect", wpRoot, err)
+		log.Printf("ParseDBConfig error for provided wpRoot=%s: %v", wpRoot, err)
+		apiErr(w, http.StatusOK, "could not parse database config at provided wp_root '"+wpRoot+"': "+err.Error())
+		return
 	}
 
 	detectedRoot, err := sshClient.DetectWPRoot()
@@ -875,7 +885,7 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 	dbName, dbUser, dbPass, dbHost, err := sshClient.ParseDBConfig(wpRoot)
 	if err != nil {
 		log.Printf("ParseDBConfig error for wpRoot=%s: %v", wpRoot, err)
-		apiErr(w, http.StatusOK, "could not parse database config: "+err.Error())
+		apiErr(w, http.StatusOK, "could not parse database config at detected wp_root '"+wpRoot+"': "+err.Error())
 		return
 	}
 

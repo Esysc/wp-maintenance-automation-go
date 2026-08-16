@@ -28,7 +28,7 @@ interface Site {
 
 const emptyForm = (): Partial<Site> => ({
   wp_ssh_port: 22,
-  wp_root: '/var/www/html',
+  wp_root: '',
   backup_dir: './backups',
   retention_flags: '--keep-daily 7 --keep-weekly 4',
 })
@@ -45,6 +45,31 @@ export default function Sites() {
   const { t } = useLanguage()
 
   useEffect(() => { load() }, [])
+
+  function detectErrorMessage(resp: any): string {
+    const fallback = t('config_detection_failed')
+    if (!resp || typeof resp !== 'object') return fallback
+    if (typeof resp.error === 'string' && resp.error.trim()) return resp.error.trim()
+    if (typeof resp.message === 'string' && resp.message.trim()) return resp.message.trim()
+    if (resp.data && typeof resp.data === 'object') {
+      const data = resp.data as Record<string, unknown>
+      if (typeof data.error === 'string' && data.error.trim()) return data.error.trim()
+      if (typeof data.message === 'string' && data.message.trim()) return data.message.trim()
+    }
+    return fallback
+  }
+
+  function detectThrownErrorMessage(e: unknown): string {
+    const fallback = t('config_detection_failed')
+    if (!e) return fallback
+    if (typeof e === 'string' && e.trim()) return e.trim()
+    if (typeof e === 'object') {
+      const err = e as Record<string, unknown>
+      if (typeof err.message === 'string' && err.message.trim()) return err.message.trim()
+      if (typeof err.error === 'string' && err.error.trim()) return err.error.trim()
+    }
+    return fallback
+  }
 
   async function load() {
     const res = await apiGet<Site[]>('/api/v1/sites')
@@ -75,10 +100,10 @@ export default function Sites() {
         }))
         toast(t('config_detected_success'), 'success')
       } else {
-        toast(res.error || t('config_detection_failed'), 'error')
+        toast(detectErrorMessage(res), 'error')
       }
-    } catch (e: any) {
-      toast(e.message || t('config_detection_failed'), 'error')
+    } catch (e: unknown) {
+      toast(detectThrownErrorMessage(e), 'error')
     }
     setDetecting(false)
   }
@@ -135,19 +160,41 @@ export default function Sites() {
     reloadSites()
   }
 
-  function field(key: keyof Site, label: string, opts?: { readonly?: boolean; type?: string; placeholder?: string }) {
+  function field(key: keyof Site, label: string, opts?: { readonly?: boolean; type?: string; multiline?: boolean; rows?: number }) {
     if (!editing) return null
     const val = editing.data[key] ?? ''
     const id = 'f_' + key
+    const inputValue = typeof val === 'boolean' ? (val ? '1' : '0') : String(val)
+    const onValueChange = (value: string, type?: string) => {
+      setEditing(prev => ({
+        ...prev!,
+        data: { ...prev!.data, [key]: type === 'number' ? parseInt(value) || 0 : value }
+      }))
+    }
+
+    if (opts?.multiline) {
+      return (
+        <div className="field-floating">
+          <textarea
+            id={id}
+            placeholder=" "
+            readOnly={opts?.readonly}
+            rows={opts?.rows || 6}
+            value={inputValue}
+            onChange={e => onValueChange(e.target.value)}
+            required={!opts?.readonly}
+          />
+          <label htmlFor={id}>{label}</label>
+        </div>
+      )
+    }
+
     return (
       <div className="field-floating">
         <input id={id} type={opts?.type || 'text'} placeholder=" "
           readOnly={opts?.readonly}
-          value={typeof val === 'boolean' ? (val ? '1' : '0') : String(val)}
-          onChange={e => setEditing(prev => ({
-            ...prev!,
-            data: { ...prev!.data, [key]: e.target.type === 'number' ? parseInt(e.target.value) || 0 : e.target.value }
-          }))}
+          value={inputValue}
+          onChange={e => onValueChange(e.target.value, e.target.type)}
           required={!opts?.readonly} />
         <label htmlFor={id}>{label}</label>
       </div>
@@ -196,7 +243,7 @@ export default function Sites() {
               {field('wp_ssh_host', t('form_ssh_host'))}
               {field('wp_ssh_port', t('form_ssh_port'), { type: 'number' })}
               {field('wp_ssh_user', t('form_ssh_user'))}
-              {field('wp_ssh_key', t('form_ssh_key'))}
+              {field('wp_ssh_key', t('form_ssh_key'), { multiline: true, rows: 8 })}
               {field('wp_root', t('form_wp_root'))}
               <div className="form-group">
                 <button type="button" className="btn btn-sm btn-secondary" onClick={detectConfig} disabled={detecting}>

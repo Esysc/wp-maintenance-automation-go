@@ -121,14 +121,8 @@ cp .env.example .env
 5. Run the servers:
 
 ```bash
-# Start only PostgreSQL for local dev (make dev expects DB on localhost:5432)
-docker compose up -d db
-
-# Then run the combined API + Web server on the host
 make dev
 ```
-
-Note: if you run `make dev`, do not also run the full Compose app stack (`api`, `web`, `caddy`) at the same time, or ports `8080`/`8081` can conflict.
 
 Or run individually:
 
@@ -225,8 +219,6 @@ Key environment variables (see `.env.example`):
 | `WP_MAINTENANCE_DOMAIN` | `localhost` | Domain for Caddy / Let's Encrypt |
 | `WP_MAINTENANCE_HOSTS` | - | Extra Caddy site address (e.g. your LAN IP `192.168.1.116`) to serve HTTPS on in addition to the domain |
 | `WP_MAINTENANCE_DEFAULT_SNI` | `localhost` | TLS SNI used for IP/SNI-less connections; defaults to `WP_MAINTENANCE_HOSTS` so IP access serves the right cert |
-| `CADDY_HTTP_PORT` | `80` | Host port mapped to Caddy HTTP (`:80` inside container) |
-| `CADDY_HTTPS_PORT` | `443` | Host port mapped to Caddy HTTPS (`:443` inside container) |
 
 ### Restic Repository Formats
 
@@ -263,13 +255,6 @@ Each WordPress site is configured through the Web UI and stored in the database 
 - **Domain set** (`WP_MAINTENANCE_DOMAIN=example.com`): Caddy automatically provisions Let's Encrypt certificates for your domain.
 - HTTP on port 80 redirects to HTTPS on port 443 automatically.
 - **Accessing via LAN IP**: set `WP_MAINTENANCE_HOSTS=<your-ip>` (e.g. `WP_MAINTENANCE_HOSTS=192.168.1.116 docker compose up -d`) so Caddy issues a certificate for that IP. Browsers don't send SNI for IP addresses, so `WP_MAINTENANCE_DEFAULT_SNI` is set to that IP automatically to serve the matching certificate.
-- **If ports 80/443 are unavailable on your host**: remap Caddy to high ports and use those in the URL. Example:
-
-```bash
-CADDY_HTTP_PORT=8088 CADDY_HTTPS_PORT=8443 WP_MAINTENANCE_HOSTS=192.168.1.116 docker compose up -d
-```
-
-Then open `https://192.168.1.116:8443`.
 - Certificates are issued by Caddy's internal CA (root at `caddy_data/caddy/pki/authorities/local/root.crt`). To avoid browser warnings, trust that root certificate on each client machine (or use a real domain for Let's Encrypt).
 
 ## Staging Rehearsal

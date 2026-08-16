@@ -15,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - README feature overview and core capability list now document the sandbox disaster-drill workflow alongside staging rehearsal and restore flows.
+- Added focused tests for sandbox retry/state handling and restic helpers to improve repository coverage.
 
 ### Fixed
 - Database layer now supports both PostgreSQL production DSNs and SQLite test file paths, including the schema migration checks used in unit tests.

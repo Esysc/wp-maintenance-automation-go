@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
@@ -45,18 +46,82 @@ const (
 )
 
 type Manager struct {
-	DataDir      string
-	BuildContext string
-	Database     *db.Database
-	wpRunner     func(args ...string) (string, error)
+	DataDir       string
+	BuildContext  string
+	Database      *db.Database
+	wpRunner      func(args ...string) (string, error)
+	connectedOnce bool
+
+	startMu sync.Mutex
+	stream  *logStream
+}
+
+// logStream buffers the log lines produced by a Start run and broadcasts them
+// to SSE subscribers so the UI can stream startup progress live.
+type logStream struct {
+	mu      sync.Mutex
+	lines   []string
+	closed  bool
+	success bool
+	subs    []chan map[string]interface{}
+}
+
+func (s *logStream) add(line string) {
+	s.mu.Lock()
+	s.lines = append(s.lines, line)
+	ev := map[string]interface{}{"line": line}
+	subs := s.subs
+	s.mu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+func (s *logStream) close(success bool) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	s.success = success
+	ev := map[string]interface{}{"done": true, "success": success}
+	subs := s.subs
+	s.subs = nil
+	s.mu.Unlock()
+	for _, ch := range subs {
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+// subscribe replays the lines buffered so far and returns a channel of
+// subsequent events. If the stream is already closed, done is true.
+func (s *logStream) subscribe() (lines []string, ch <-chan map[string]interface{}, done bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	lines = append([]string{}, s.lines...)
+	if s.closed {
+		return lines, nil, true
+	}
+	sub := make(chan map[string]interface{}, 64)
+	s.subs = append(s.subs, sub)
+	return lines, sub, false
 }
 
 type State struct {
 	SiteID     string `json:"site_id"`
+	WPHost     string `json:"wp_host"`
 	SSHPort    string `json:"ssh_port"`
 	HTTPPort   string `json:"http_port"`
 	HTTPSPort  string `json:"https_port"`
 	HealthURL  string `json:"health_url"`
+	SiteURL    string `json:"site_url"`
 	AdminPass  string `json:"admin_pass"`
 	Broken     bool   `json:"broken"`
 	WPVersion  string `json:"wp_version"`
@@ -66,15 +131,17 @@ type State struct {
 
 // Status is returned to the API/UI.
 type Status struct {
-	Running    bool   `json:"running"`
-	SiteID     string `json:"site_id"`
-	HealthURL  string `json:"health_url"`
-	WPVersion  string `json:"wp_version"`
-	Healthy    bool   `json:"healthy"`
-	Broken     bool   `json:"broken"`
-	Message    string `json:"message"`
-	SSHPort    int    `json:"ssh_port"`
-	LastAction string `json:"last_action"`
+	Running    bool     `json:"running"`
+	SiteID     string   `json:"site_id"`
+	HealthURL  string   `json:"health_url"`
+	SiteURL    string   `json:"site_url"`
+	WPVersion  string   `json:"wp_version"`
+	Healthy    bool     `json:"healthy"`
+	Broken     bool     `json:"broken"`
+	Message    string   `json:"message"`
+	SSHPort    int      `json:"ssh_port"`
+	LastAction string   `json:"last_action"`
+	Logs       []string `json:"logs,omitempty"`
 }
 
 func NewManager(dataDir, buildContext string, database *db.Database) *Manager {
@@ -106,16 +173,110 @@ func (m *Manager) compose(args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
-func (m *Manager) containerPort(service, containerPort string) string {
-	out, err := m.compose("port", service, containerPort)
+// wpContainerIP resolves the IP of the sandbox web container on the sandbox
+// network. The API server (whether it runs on the host or in its own
+// container) reaches the sandbox over this address, so it must not use the
+// host-loopback ports published by the sandbox compose file.
+func (m *Manager) wpContainerIP() (string, error) {
+	out, err := m.compose("ps", "-q", "wp")
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve sandbox wp container: %w\n%s", err, string(out))
+	}
+	cid := strings.TrimSpace(string(out))
+	if cid == "" {
+		return "", fmt.Errorf("sandbox wp container is not running")
+	}
+
+	cmd := exec.Command("docker", "inspect", "-f", "{{range $name, $net := .NetworkSettings.Networks}}{{$name}}={{$net.IPAddress}} {{end}}", cid)
+	cmd.Env = os.Environ()
+	out, err = cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to inspect sandbox wp container: %w\n%s", err, string(out))
+	}
+
+	defaultNet := projectName + "_default"
+	fallback := ""
+	for _, tok := range strings.Fields(string(out)) {
+		parts := strings.SplitN(tok, "=", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			continue
+		}
+		if parts[0] == defaultNet {
+			return parts[1], nil
+		}
+		if fallback == "" {
+			fallback = parts[1]
+		}
+	}
+	if fallback != "" {
+		return fallback, nil
+	}
+	return "", fmt.Errorf("sandbox wp container has no network address")
+}
+
+// apiContainerID returns the ID of the container this process runs in, or ""
+// when running directly on the host. Docker sets HOSTNAME to the container ID
+// inside containers, so inspecting it tells us whether we are containerized.
+func (m *Manager) apiContainerID() string {
+	host := strings.TrimSpace(os.Getenv("HOSTNAME"))
+	if host == "" {
+		return ""
+	}
+	out, err := exec.Command("docker", "inspect", "-f", "{{.Id}}", host).CombinedOutput()
 	if err != nil {
 		return ""
 	}
-	s := strings.TrimSpace(string(out))
-	if idx := strings.LastIndex(s, ":"); idx >= 0 {
-		return s[idx+1:]
+	return strings.TrimSpace(string(out))
+}
+
+// ConnectToNetwork attaches the API server container to the sandbox network
+// so that SSH/HTTP/SFTP connections to the sandbox wp container work when the
+// API runs inside Docker. It is a no-op when the API runs on the host and
+// idempotent when the container is already connected. The result is cached in
+// memory so repeated calls (every status poll) are cheap; the cache is reset
+// when the connection is torn down in Stop or the process restarts, so the
+// connection is transparently re-established after an API container recreate.
+func (m *Manager) ConnectToNetwork() error {
+	if m.connectedOnce {
+		return nil
 	}
-	return s
+	cid := m.apiContainerID()
+	if cid == "" {
+		return nil
+	}
+	if !m.isRunning() {
+		return nil
+	}
+	netName := projectName + "_default"
+	cmd := exec.Command("docker", "network", "connect", netName, cid)
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := string(out)
+		if strings.Contains(msg, "already exists") || strings.Contains(msg, "is already") {
+			m.connectedOnce = true
+			return nil
+		}
+		return fmt.Errorf("failed to connect API container to sandbox network: %w\n%s", err, msg)
+	}
+	m.connectedOnce = true
+	log.Printf("sandbox: connected API container %s to network %s", cid, netName)
+	return nil
+}
+
+// disconnectAPIFromNetwork detaches the API container from the sandbox network
+// so that `docker compose down -v` can remove it. No-op when running on the host.
+func (m *Manager) disconnectAPIFromNetwork() {
+	m.connectedOnce = false
+	cid := m.apiContainerID()
+	if cid == "" {
+		return
+	}
+	cmd := exec.Command("docker", "network", "disconnect", projectName+"_default", cid)
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		log.Printf("sandbox: failed to disconnect API container from sandbox network: %v", err)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -242,7 +403,12 @@ func (m *Manager) ensureResticRepo() error {
 // Start brings the local sandbox WordPress up, seeds it with sample content
 // and registers it as a site in the database. It is idempotent: if the stack
 // is already running it just returns the current status.
-func (m *Manager) Start() (*Status, error) {
+//
+// publicBase is the externally reachable base of the application (e.g.
+// "https://192.168.1.116"); the sandbox site is then published under
+// publicBase + "/sandbox-site" so it can be viewed from the browser even
+// though the sandbox itself only listens on the Docker-internal network.
+func (m *Manager) Start(publicBase string) (ret *Status, err error) {
 	if !dockerAvailable() {
 		return nil, fmt.Errorf("docker is required to run the local sandbox site")
 	}
@@ -250,10 +416,33 @@ func (m *Manager) Start() (*Status, error) {
 		return nil, err
 	}
 
+	stream := &logStream{}
+	m.startMu.Lock()
+	m.stream = stream
+	m.startMu.Unlock()
+	defer func() {
+		stream.close(err == nil)
+		m.startMu.Lock()
+		m.stream = nil
+		m.startMu.Unlock()
+	}()
+
+	logs := []string{}
+	startLog := func(format string, args ...interface{}) {
+		msg := fmt.Sprintf(format, args...)
+		line := time.Now().Format("15:04:05") + " " + msg
+		logs = append(logs, line)
+		stream.add(line)
+		log.Printf("sandbox: %s", msg)
+	}
+
+	startLog("preparing sandbox start")
+
 	st := m.loadState()
 	if st == nil {
 		st = &State{LastStart: time.Now().Format(time.RFC3339)}
 	}
+	startLog("ensuring SSH key and restic repository")
 
 	pubKey, err := m.ensureSSHKey()
 	if err != nil {
@@ -263,6 +452,7 @@ func (m *Manager) Start() (*Status, error) {
 		return nil, err
 	}
 
+	startLog("rendering sandbox compose file")
 	absContext, err := filepath.Abs(m.BuildContext)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve build context: %w", err)
@@ -271,29 +461,50 @@ func (m *Manager) Start() (*Status, error) {
 		return nil, err
 	}
 
+	startLog("starting sandbox containers")
 	if out, err := m.compose("up", "-d", "--build"); err != nil {
 		return nil, fmt.Errorf("docker compose up failed: %w\n%s", err, string(out))
 	}
 
+	startLog("waiting for sandbox database")
 	if err := m.waitDB(); err != nil {
 		return nil, err
 	}
-	if err := m.waitHTTP(); err != nil {
+	startLog("connecting the API server to the sandbox network")
+	m.connectedOnce = false
+	if err := m.ConnectToNetwork(); err != nil {
 		return nil, err
 	}
 
-	st.SSHPort = m.containerPort("wp", "22")
-	st.HTTPPort = m.containerPort("wp", "80")
-	st.HTTPSPort = m.containerPort("wp", "443")
-	if st.SSHPort == "" || st.HTTPSPort == "" {
-		return nil, fmt.Errorf("failed to resolve sandbox container ports (ssh=%q https=%q)", st.SSHPort, st.HTTPSPort)
+	startLog("resolving sandbox container address")
+	wpIP, err := m.wpContainerIP()
+	if err != nil {
+		return nil, err
 	}
-	st.HealthURL = "https://localhost:" + st.HTTPSPort
 
+	startLog("waiting for sandbox web server")
+	if err := m.waitHTTP(wpIP); err != nil {
+		return nil, err
+	}
+
+	st.WPHost = wpIP
+	st.SSHPort = "22"
+	st.HTTPPort = "80"
+	st.HTTPSPort = "443"
+	st.HealthURL = "https://" + wpIP
+	st.SiteURL = m.siteURL(publicBase)
+
+	startLog("provisioning WordPress content")
 	if err := m.setupWordPress(st); err != nil {
 		return nil, err
 	}
 
+	startLog("applying sandbox site URL")
+	if err := m.ensureSiteURL(st); err != nil {
+		return nil, err
+	}
+
+	startLog("registering sandbox site in the database")
 	siteID, err := m.upsertSite(st)
 	if err != nil {
 		return nil, err
@@ -305,8 +516,80 @@ func (m *Manager) Start() (*Status, error) {
 		return nil, err
 	}
 
-	log.Printf("sandbox: started at %s (ssh=%s, https=%s, site=%s)", st.HealthURL, st.SSHPort, st.HTTPSPort, st.SiteID)
-	return m.Status(), nil
+	startLog("sandbox started (site=%s, health=%s, site_url=%s)", st.SiteID, st.HealthURL, st.SiteURL)
+	status := m.Status()
+	status.Logs = logs
+	return status, nil
+}
+
+// StreamStartLogs serves the running Start's progress as Server-Sent Events so
+// the UI can show startup logs live. Each event is a JSON object with a
+// "line" field, and a final {"done":true,"success":bool} event when the start
+// finishes. If no start is in progress the done event is sent right away.
+func (m *Manager) StreamStartLogs(w http.ResponseWriter, r *http.Request) error {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		return fmt.Errorf("streaming unsupported")
+	}
+
+	writeEvent := func(ev map[string]interface{}) error {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", b); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+
+	stream := func() *logStream {
+		m.startMu.Lock()
+		defer m.startMu.Unlock()
+		return m.stream
+	}()
+
+	// The start request may not have created the stream yet; wait briefly.
+	for i := 0; stream == nil && i < 50; i++ {
+		select {
+		case <-r.Context().Done():
+			return nil
+		case <-time.After(200 * time.Millisecond):
+		}
+		stream = func() *logStream {
+			m.startMu.Lock()
+			defer m.startMu.Unlock()
+			return m.stream
+		}()
+	}
+	if stream == nil {
+		return writeEvent(map[string]interface{}{"done": true, "success": true})
+	}
+
+	lines, ch, done := stream.subscribe()
+	for _, line := range lines {
+		if err := writeEvent(map[string]interface{}{"line": line}); err != nil {
+			return err
+		}
+	}
+	if done {
+		return writeEvent(map[string]interface{}{"done": true, "success": stream.success})
+	}
+
+	for {
+		select {
+		case ev := <-ch:
+			if err := writeEvent(ev); err != nil {
+				return err
+			}
+			if ev["done"] == true {
+				return nil
+			}
+		case <-r.Context().Done():
+			return nil
+		}
+	}
 }
 
 // Break intentionally destroys the sandbox site: core files, uploads, the
@@ -351,6 +634,7 @@ func (m *Manager) Status() *Status {
 	if st != nil {
 		status.SiteID = st.SiteID
 		status.HealthURL = st.HealthURL
+		status.SiteURL = st.SiteURL
 		status.Broken = st.Broken
 		status.LastAction = st.LastAction
 		status.SSHPort = parsePort(st.SSHPort)
@@ -360,6 +644,10 @@ func (m *Manager) Status() *Status {
 	if !status.Running {
 		status.Message = "not running"
 		return status
+	}
+
+	if err := m.ConnectToNetwork(); err != nil {
+		log.Printf("sandbox: warning: %v", err)
 	}
 
 	status.WPVersion = m.wpVersion()
@@ -375,12 +663,130 @@ func (m *Manager) Status() *Status {
 	return status
 }
 
+// IsSandboxSiteID reports whether the given site ID belongs to the local
+// sandbox. Used by the job worker to keep the sandbox state in sync after a
+// restore.
+func (m *Manager) IsSandboxSiteID(siteID string) bool {
+	st := m.loadState()
+	return st != nil && st.SiteID == siteID
+}
+
+// MarkRestored records that the sandbox site was successfully restored after a
+// disaster drill, clearing the intentionally-broken flag.
+func (m *Manager) MarkRestored() error {
+	st := m.loadState()
+	if st == nil {
+		return nil
+	}
+	if !st.Broken {
+		return nil
+	}
+	st.Broken = false
+	st.LastAction = "restored"
+	if err := m.saveState(st); err != nil {
+		return fmt.Errorf("failed to save sandbox state after restore: %w", err)
+	}
+	log.Printf("sandbox: site restored from backup")
+	return nil
+}
+
+// siteURL builds the externally reachable URL of the sandbox site from the
+// public base of the application. Returns "" when no public base is known, in
+// which case callers fall back to the internal HealthURL.
+func (m *Manager) siteURL(publicBase string) string {
+	base := strings.TrimRight(strings.TrimSpace(publicBase), "/")
+	if base == "" {
+		return ""
+	}
+	return base + "/sandbox-site"
+}
+
+// ensureSiteURL makes sure WordPress is configured with the sandbox's public
+// site URL (siteurl and home options). It is idempotent and also covers the
+// case where the sandbox was started earlier with a different URL.
+func (m *Manager) ensureSiteURL(st *State) error {
+	if st.SiteURL == "" {
+		return nil
+	}
+	if _, err := m.wpArgsRetry("option", "update", "siteurl", st.SiteURL); err != nil {
+		return fmt.Errorf("failed to update siteurl: %w", err)
+	}
+	if _, err := m.wpArgsRetry("option", "update", "home", st.SiteURL); err != nil {
+		return fmt.Errorf("failed to update home url: %w", err)
+	}
+	return nil
+}
+
+// ReapplySiteURL re-applies the sandbox's public site URL after a restore, in
+// case the restored database carries a siteurl/home from an earlier run.
+func (m *Manager) ReapplySiteURL() error {
+	if !m.isRunning() {
+		return nil
+	}
+	st := m.loadState()
+	if st == nil {
+		return nil
+	}
+	if err := m.ensureSiteURL(st); err != nil {
+		return fmt.Errorf("failed to re-apply site url after restore: %w", err)
+	}
+	if err := m.ensureRewriteRules(); err != nil {
+		log.Printf("sandbox: warning: failed to re-apply rewrite rules after restore: %v", err)
+	}
+	log.Printf("sandbox: re-applied site url %s", st.SiteURL)
+	return nil
+}
+
+// ensureRewriteRules writes the standard WordPress pretty-permalink rules to
+// the sandbox's .htaccess. The site is served through the application under a
+// URL prefix, but the proxy strips that prefix, so the rules target a root
+// install (RewriteBase /). wp-cli will not write the file itself, so it is
+// written directly. This also covers restores from backups taken before the
+// .htaccess existed.
+func (m *Manager) ensureRewriteRules() error {
+	htaccess := `# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress`
+	htaccessB64 := base64.StdEncoding.EncodeToString([]byte(htaccess))
+	out, err := m.compose("exec", "-T", "wp", "bash", "-c",
+		"echo "+htaccessB64+" | base64 -d > /var/www/html/.htaccess && chown www-data:www-data /var/www/html/.htaccess")
+	if err != nil {
+		return fmt.Errorf("failed to write sandbox .htaccess: %w\n%s", err, string(out))
+	}
+	return nil
+}
+
+// SiteProxyTarget returns the base address of the sandbox web server on the
+// sandbox network. The API server uses it to serve the sandbox site through
+// the application at /sandbox-site, so the site is viewable from the browser
+// even though it only listens on the Docker-internal network. HTTPS is used so
+// WordPress believes the request is secure and generates https:// asset URLs
+// instead of mixing http:// links into the page.
+func (m *Manager) SiteProxyTarget() (string, error) {
+	if !m.isRunning() {
+		return "", fmt.Errorf("sandbox is not running")
+	}
+	ip, err := m.wpContainerIP()
+	if err != nil {
+		return "", err
+	}
+	return "https://" + ip, nil
+}
+
 // Stop tears down the sandbox stack. The site record and backup history are
 // kept in the database.
 func (m *Manager) Stop() error {
 	if !dockerAvailable() {
 		return fmt.Errorf("docker is required for the sandbox")
 	}
+	m.disconnectAPIFromNetwork()
 	out, err := m.compose("down", "-v", "--remove-orphans")
 	if err != nil {
 		return fmt.Errorf("docker compose down failed: %w\n%s", err, string(out))
@@ -393,6 +799,49 @@ func (m *Manager) Stop() error {
 		}
 	}
 	log.Printf("sandbox: stopped")
+	return nil
+}
+
+// Delete removes the test site entirely: it tears down the running containers,
+// deletes the site record together with its backups and jobs from the
+// database, and wipes the sandbox data directory (SSH key, restic repository,
+// downloaded backups and state). The next Start provisions a brand new site.
+func (m *Manager) Delete() error {
+	if !dockerAvailable() {
+		return fmt.Errorf("docker is required for the sandbox")
+	}
+
+	st := m.loadState()
+
+	if m.isRunning() {
+		m.disconnectAPIFromNetwork()
+		out, err := m.compose("down", "-v", "--remove-orphans")
+		if err != nil {
+			return fmt.Errorf("docker compose down failed: %w\n%s", err, string(out))
+		}
+	}
+
+	if st != nil && st.SiteID != "" {
+		if err := m.Database.DeleteSite(st.SiteID); err != nil {
+			return fmt.Errorf("failed to delete sandbox site record: %w", err)
+		}
+		log.Printf("sandbox: deleted site record %s", st.SiteID)
+	}
+
+	entries, err := os.ReadDir(m.DataDir)
+	if err != nil {
+		return fmt.Errorf("failed to read sandbox data directory: %w", err)
+	}
+	for _, e := range entries {
+		// DataDir is a mounted volume, so the mountpoint itself cannot be
+		// removed; clear its contents instead. This wipes the SSH key, the
+		// restic repository, downloaded backups, state and compose file.
+		if err := os.RemoveAll(filepath.Join(m.DataDir, e.Name())); err != nil {
+			return fmt.Errorf("failed to remove sandbox data %q: %w", e.Name(), err)
+		}
+	}
+
+	log.Printf("sandbox: test site deleted (containers stopped, site record and sandbox data removed)")
 	return nil
 }
 
@@ -439,13 +888,9 @@ func (m *Manager) waitDB() error {
 	return fmt.Errorf("sandbox database did not become ready within 120s")
 }
 
-func (m *Manager) waitHTTP() error {
-	port := m.containerPort("wp", "80")
-	if port == "" {
-		return fmt.Errorf("cannot resolve sandbox http port")
-	}
+func (m *Manager) waitHTTP(addr string) error {
 	for i := 0; i < 60; i++ {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 2*time.Second)
+		conn, err := net.DialTimeout("tcp", addr+":80", 2*time.Second)
 		if err == nil {
 			conn.Close()
 			return nil
@@ -515,9 +960,14 @@ func (m *Manager) setupWordPress(st *State) error {
 		st.AdminPass = randomPass()
 	}
 
+	wpURL := st.SiteURL
+	if wpURL == "" {
+		wpURL = st.HealthURL
+	}
+
 	if _, err := m.wpArgs(
 		"core", "install",
-		"--url="+st.HealthURL,
+		"--url="+wpURL,
 		"--title=Local Sandbox Site",
 		"--admin_user=admin",
 		"--admin_password="+st.AdminPass,
@@ -527,14 +977,17 @@ func (m *Manager) setupWordPress(st *State) error {
 		return fmt.Errorf("failed to install WordPress: %w", err)
 	}
 
-	if _, err := m.wpArgsRetry("option", "update", "siteurl", st.HealthURL); err != nil {
+	if _, err := m.wpArgsRetry("option", "update", "siteurl", wpURL); err != nil {
 		return fmt.Errorf("failed to update siteurl: %w", err)
 	}
-	if _, err := m.wpArgsRetry("option", "update", "home", st.HealthURL); err != nil {
+	if _, err := m.wpArgsRetry("option", "update", "home", wpURL); err != nil {
 		return fmt.Errorf("failed to update home url: %w", err)
 	}
 	if _, err := m.wpArgsRetry("rewrite", "structure", "/%postname%/"); err != nil {
 		return fmt.Errorf("failed to configure permalink structure: %w", err)
+	}
+	if err := m.ensureRewriteRules(); err != nil {
+		return err
 	}
 
 	posts := []struct{ title, content string }{
@@ -612,10 +1065,14 @@ func (m *Manager) upsertSite(st *State) (string, error) {
 
 	build := func(id string) *db.Site {
 		privKeyPath, _ := m.keyPaths()
+		sshHost := st.WPHost
+		if sshHost == "" {
+			sshHost = "127.0.0.1"
+		}
 		return &db.Site{
 			ID:                 id,
 			Name:               siteName,
-			WPSSHHost:          "127.0.0.1",
+			WPSSHHost:          sshHost,
 			WPSSHPort:          parsePort(st.SSHPort),
 			WPSSHUser:          "root",
 			WPSSHKey:           mustRead(privKeyPath),

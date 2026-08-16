@@ -185,6 +185,10 @@ func Run() {
 	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleSandbox))
 	mux.HandleFunc("/api/v1/sandbox/", s.authMiddleware(s.handleSandbox))
 
+	// Sandbox site served through the app so the browser can view it.
+	mux.HandleFunc("/sandbox-site", s.authMiddleware(s.handleSandboxSite))
+	mux.HandleFunc("/sandbox-site/", s.authMiddleware(s.handleSandboxSite))
+
 	handler := corsMiddleware(mux)
 
 	tlsDisable := os.Getenv("TLS_DISABLE")

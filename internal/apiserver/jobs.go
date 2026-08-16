@@ -145,6 +145,13 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		return
 	}
 
+	if s.Sandbox != nil && s.Sandbox.IsSandboxSiteID(job.SiteID) {
+		if err := s.Sandbox.ConnectToNetwork(); err != nil {
+			setError("sandbox network not reachable: " + err.Error())
+			return
+		}
+	}
+
 	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
 	sshOpts.Key = site.WPSSHKey
 	sshClient := s.newSSHClient(sshOpts)
@@ -488,6 +495,12 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		log.Printf("restore completed for site %s: snapshot=%s", site.Name, tuple.req.SnapshotID)
+		if s.Sandbox != nil && s.Sandbox.IsSandboxSiteID(job.SiteID) {
+			if err := s.Sandbox.ReapplySiteURL(); err != nil {
+				log.Printf("sandbox: warning: %v", err)
+			}
+			s.Sandbox.MarkRestored()
+		}
 		setResult(fmt.Sprintf(`{"snapshot_id":"%s","apply_db":%t,"apply_files":%t}`, tuple.req.SnapshotID, tuple.req.ApplyDB, tuple.req.ApplyFiles))
 
 	case "upgrade":

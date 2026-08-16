@@ -92,32 +92,32 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	env.ComposeFile = composeFile
 
 	if err := env.up(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("docker compose up failed: %w", err)
 	}
 
 	if err := env.waitForDB(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("database not ready: %w", err)
 	}
 
 	if err := env.createUser(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("DB user creation failed: %w", err)
 	}
 
 	if err := env.importDB(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("database import failed: %w", err)
 	}
 
 	if err := env.copyFiles(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("file copy failed: %w", err)
 	}
 
 	if err := env.patchWPConfig(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("wp-config patch failed: %w", err)
 	}
 
@@ -134,17 +134,17 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	removeConstCmd.CombinedOutput()
 
 	if err := env.readTablePrefix(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("table prefix detection failed: %w", err)
 	}
 
 	if err := env.resolvePorts(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("port resolution failed: %w", err)
 	}
 
 	if err := env.updateSiteURL(); err != nil {
-		env.cleanup()
+		env.cleanup(false)
 		return nil, fmt.Errorf("site URL update failed: %w", err)
 	}
 
@@ -161,17 +161,44 @@ func (m *Manager) Destroy(env *StagingEnv) error {
 	if env == nil {
 		return nil
 	}
-	return env.cleanup()
+	return env.cleanup(false)
+}
+
+func (m *Manager) DestroyForce(env *StagingEnv) error {
+	if env == nil {
+		return nil
+	}
+	return env.cleanup(true)
 }
 
 func (env *StagingEnv) WPCLI(args string) (string, error) {
-	cmd := exec.Command("docker", "compose",
+	wpArgs := strings.Fields(strings.TrimSpace(args))
+	if len(wpArgs) == 0 {
+		return "", fmt.Errorf("wp-cli args are required")
+	}
+	globalArgs := make([]string, 0, len(wpArgs))
+	commandArgs := make([]string, 0, len(wpArgs))
+	for _, arg := range wpArgs {
+		if strings.HasPrefix(arg, "--skip-") || strings.HasPrefix(arg, "--url=") || arg == "--quiet" {
+			globalArgs = append(globalArgs, arg)
+			continue
+		}
+		commandArgs = append(commandArgs, arg)
+	}
+	cmdArgs := []string{
+		"compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
 		"exec", "-T", "wp",
-		"wp", "--allow-root", "--path=/var/www/html", args,
-	)
+		"wp", "--allow-root", "--path=/var/www/html",
+	}
+	if len(globalArgs) > 0 {
+		cmdArgs = append(cmdArgs, globalArgs...)
+	}
+	cmdArgs = append(cmdArgs, commandArgs...)
+	cmd := exec.Command("docker", cmdArgs...)
 	cmd.Env = os.Environ()
+	cmd.Env = append(cmd.Env, "HTTP_X_FORWARDED_PROTO=https")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("wp-cli failed: %w\nOutput: %s", err, string(output))
@@ -666,8 +693,11 @@ func (env *StagingEnv) getContainerPort(containerPort string) string {
 	return portStr
 }
 
-func (env *StagingEnv) cleanup() error {
+func (env *StagingEnv) cleanup(force bool) error {
 	if env.ComposeFile == "" {
+		if force {
+			return env.forceCleanup()
+		}
 		return nil
 	}
 	cmd := exec.Command("docker", "compose",
@@ -676,7 +706,15 @@ func (env *StagingEnv) cleanup() error {
 		"down", "-v", "--remove-orphans",
 	)
 	cmd.Env = os.Environ()
-	cmd.Run()
+	output, err := cmd.CombinedOutput()
+	if err != nil && !force {
+		return fmt.Errorf("docker compose down failed: %w\nOutput: %s", err, string(output))
+	}
+	if force {
+		if forceErr := env.forceCleanup(); forceErr != nil {
+			return forceErr
+		}
+	}
 
 	if env.RestoreDir != "" {
 		os.RemoveAll(env.RestoreDir)
@@ -686,6 +724,29 @@ func (env *StagingEnv) cleanup() error {
 		os.Remove(env.ComposeFile)
 	}
 
+	return nil
+}
+
+func (env *StagingEnv) forceCleanup() error {
+	if env.ProjectName == "" {
+		return nil
+	}
+	listCmd := exec.Command("docker", "ps", "-aq", "--filter", "label=com.docker.compose.project="+env.ProjectName)
+	listCmd.Env = os.Environ()
+	idsOut, err := listCmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker ps force cleanup failed: %w\nOutput: %s", err, string(idsOut))
+	}
+	ids := strings.Fields(string(idsOut))
+	if len(ids) > 0 {
+		args := append([]string{"rm", "-f"}, ids...)
+		killCmd := exec.Command("docker", args...)
+		killCmd.Env = os.Environ()
+		killOut, killErr := killCmd.CombinedOutput()
+		if killErr != nil {
+			return fmt.Errorf("docker rm -f failed: %w\nOutput: %s", killErr, string(killOut))
+		}
+	}
 	return nil
 }
 

@@ -1111,10 +1111,15 @@ func (s *APIServer) handleRehearsalStop(w http.ResponseWriter, r *http.Request, 
 		apiErr(w, http.StatusNotFound, "rehearsal job not found")
 		return
 	}
+	if s.StagingManager == nil {
+		apiErr(w, http.StatusServiceUnavailable, "staging manager not configured")
+		return
+	}
+	forceStop := strings.EqualFold(r.URL.Query().Get("force"), "true") || r.URL.Query().Get("force") == "1"
 
-	cleanupEnvFromResult := func(raw string) {
-		if strings.TrimSpace(raw) == "" || s.StagingManager == nil {
-			return
+	cleanupEnvFromResult := func(raw string) error {
+		if strings.TrimSpace(raw) == "" {
+			return nil
 		}
 		var envData struct {
 			ComposeFile string `json:"compose_file"`
@@ -1123,32 +1128,54 @@ func (s *APIServer) handleRehearsalStop(w http.ResponseWriter, r *http.Request, 
 			HealthURL   string `json:"health_url"`
 		}
 		if err := json.Unmarshal([]byte(raw), &envData); err != nil || strings.TrimSpace(envData.ComposeFile) == "" {
-			return
+			return nil
 		}
 		env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, envData.RestoreDir, envData.HealthURL)
-		if err := s.StagingManager.Destroy(env); err != nil {
-			log.Printf("rehearsal stop: cleanup failed for compose=%s project=%s: %v", envData.ComposeFile, envData.ProjectName, err)
+		var cleanupErr error
+		if forceStop {
+			cleanupErr = s.StagingManager.DestroyForce(env)
+		} else {
+			cleanupErr = s.StagingManager.Destroy(env)
 		}
+		if cleanupErr != nil {
+			if forceStop {
+				log.Printf("rehearsal stop: force cleanup failed for compose=%s project=%s: %v", envData.ComposeFile, envData.ProjectName, cleanupErr)
+			}
+			return fmt.Errorf("cleanup failed for compose=%s project=%s: %w", envData.ComposeFile, envData.ProjectName, cleanupErr)
+		}
+		if env.IsRunning() {
+			if forceStop {
+				return fmt.Errorf("force cleanup did not stop compose=%s project=%s", envData.ComposeFile, envData.ProjectName)
+			}
+			return fmt.Errorf("cleanup did not stop compose=%s project=%s", envData.ComposeFile, envData.ProjectName)
+		}
+		return nil
 	}
 
 	// Defensive cleanup: teardown env from selected job and any historical
 	// rehearsal jobs for the same site that still reference running containers.
-	cleanupEnvFromResult(job.Result)
+	if err := cleanupEnvFromResult(job.Result); err != nil {
+		apiErr(w, http.StatusInternalServerError, "failed to stop rehearsal: "+err.Error())
+		return
+	}
 	history, listErr := s.Database.ListJobsBySiteWithType(job.SiteID, "rehearsal")
 	if listErr == nil {
 		for _, j := range history {
 			if j == nil || j.ID == job.ID {
 				continue
 			}
-			cleanupEnvFromResult(j.Result)
+			if err := cleanupEnvFromResult(j.Result); err != nil {
+				log.Printf("rehearsal stop: historical cleanup failed for job=%s: %v", j.ID, err)
+			}
 			if j.Status != "cancelled" {
 				_ = s.Database.CancelJob(j.ID)
 			}
 		}
 	}
 
-	if job.Status != "cancelled" {
-		s.Database.CancelJob(jobID)
+	if err := s.Database.UpdateJobStatus(jobID, "cancelled", "rehearsal stopped", 100, "", ""); err != nil {
+		apiErr(w, http.StatusInternalServerError, "failed to finalize rehearsal stop")
+		return
 	}
 	jsonResp(w, http.StatusOK, map[string]interface{}{"message": "rehearsal stopped"})
 }

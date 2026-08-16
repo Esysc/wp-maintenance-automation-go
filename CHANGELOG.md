@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- Rehearsal stop now supports an explicit force-cleanup checkbox so the UI can hard-remove leftover staging containers when a normal compose shutdown is not enough.
+
+### Changed
+- Rehearsal stop now clears stored rehearsal metadata after a successful cleanup, so inactive rehearsals no longer keep showing stale environment details.
+- Rehearsal stop handling now fails closed if cleanup does not actually tear down the containers, instead of reporting a false success.
+
+### Fixed
+- Rehearsal stop and active-state polling now stay in sync with the stored job state, preventing the UI from showing an already-stopped rehearsal as still running.
+- WP-CLI readiness and inventory probes were hardened to use valid commands and quieter execution flags, reducing noisy warnings during rehearsal startup.
+
 ## [0.5.1] - 2026-08-16
 
 ### Changed

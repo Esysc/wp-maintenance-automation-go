@@ -101,13 +101,13 @@ type rehearsalUpgradeStep struct {
 func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, error) {
 	inv := &rehearsalInventory{}
 
-	coreVer, err := wpcliWithRetry(env, "core version", 8, 2*time.Second)
+	coreVer, err := wpcliWithRetry(env, "core version --skip-plugins --skip-themes", 8, 2*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("core version inventory failed: %w", err)
 	}
 	inv.CoreVersion = strings.TrimSpace(coreVer)
 
-	pluginsOut, err := wpcliWithRetry(env, "plugin list --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
+	pluginsOut, err := wpcliWithRetry(env, "plugin list --skip-plugins --skip-themes --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
 	if err == nil {
 		if data := extractJSONArray(pluginsOut); data != "" {
 			_ = json.Unmarshal([]byte(data), &inv.Plugins)
@@ -116,7 +116,7 @@ func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, er
 		log.Printf("rehearsal inventory: plugin list failed: %v", err)
 	}
 
-	themesOut, err := wpcliWithRetry(env, "theme list --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
+	themesOut, err := wpcliWithRetry(env, "theme list --skip-plugins --skip-themes --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
 	if err == nil {
 		if data := extractJSONArray(themesOut); data != "" {
 			_ = json.Unmarshal([]byte(data), &inv.Themes)
@@ -129,11 +129,11 @@ func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, er
 }
 
 func waitForRehearsalWPCLIReady(env *staging.StagingEnv) error {
-	if _, err := wpcliWithRetry(env, "core is-installed", 12, 2*time.Second); err != nil {
-		return fmt.Errorf("wp-cli readiness check failed (core is-installed): %w", err)
-	}
-	if _, err := wpcliWithRetry(env, "core version", 6, 1500*time.Millisecond); err != nil {
+	if _, err := wpcliWithRetry(env, "core version --skip-plugins --skip-themes", 12, 2*time.Second); err != nil {
 		return fmt.Errorf("wp-cli readiness check failed (core version): %w", err)
+	}
+	if _, err := wpcliWithRetry(env, "option get siteurl --skip-plugins --skip-themes", 6, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("wp-cli readiness check failed (option get siteurl): %w", err)
 	}
 	return nil
 }

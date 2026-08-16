@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import Modal from './Modal'
 import { useLanguage } from '../context/LanguageContext'
 
@@ -8,15 +9,17 @@ interface Props {
   onConfirm: () => void
   onCancel: () => void
   busy?: boolean
+  children?: ReactNode
 }
 
-export default function ConfirmDialog({ open, title, message, onConfirm, onCancel, busy }: Props) {
+export default function ConfirmDialog({ open, title, message, onConfirm, onCancel, busy, children }: Props) {
   const { t } = useLanguage()
 
   return (
     <Modal open={open} title={title} onClose={busy ? () => {} : onCancel} size="sm">
       <div className="modal-body">
         <p>{message}</p>
+        {children}
       </div>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onCancel} disabled={busy}>{t('btn_cancel')}</button>

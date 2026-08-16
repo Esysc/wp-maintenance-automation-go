@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import SiteSelector from '../components/SiteSelector'
-import JobStatus from '../components/JobStatus'
+import JobStatus, { type Job } from '../components/JobStatus'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SiteHint from '../components/SiteHint'
 import { apiGet, apiPost } from '../api/client'
@@ -71,10 +71,12 @@ export default function Rehearsal() {
   const [activeJobId, setActiveJobId] = useState<string | null>(null)
   const [stopJobId, setStopJobId] = useState<string | null>(null)
   const [jobRefreshToken, setJobRefreshToken] = useState(0)
+  const [lastFailure, setLastFailure] = useState('')
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [updating, setUpdating] = useState(false)
   const [confirmStop, setConfirmStop] = useState(false)
+  const [forceCleanup, setForceCleanup] = useState(false)
   const { toast } = useToast()
   const { t } = useLanguage()
 
@@ -195,6 +197,7 @@ export default function Rehearsal() {
       if (res.success && res.data) {
         toast(t('rehearsal_queued'), 'info')
         setEnv(null)
+        setLastFailure('')
         setActiveJobId(res.data.job_id)
         setStopJobId(res.data.job_id)
         setJobRefreshToken(v => v + 1)
@@ -211,13 +214,14 @@ export default function Rehearsal() {
     if (!stopJobId) return
     setStopping(true)
     try {
-      const res = await apiPost('/api/v1/rehearsal/' + stopJobId + '/stop')
+      const res = await apiPost('/api/v1/rehearsal/' + stopJobId + '/stop' + (forceCleanup ? '?force=1' : ''))
       if (res.success) {
         toast(t('rehearsal_stopped'), 'success')
         setEnv(null)
         setEnvActive(false)
         setActiveJobId(null)
         setStopJobId(null)
+        setForceCleanup(false)
       } else {
         toast(res.error || t('rehearsal_stop_failed'), 'error')
       }
@@ -323,7 +327,10 @@ export default function Rehearsal() {
     })()
   }
 
-  function onJobFinished() {
+  function onJobFinished(job: Job) {
+    if (job.status === 'failed' || (job.status === 'cancelled' && job.error)) {
+      setLastFailure(job.error || `Rehearsal ${job.status}`)
+    }
     void checkRunningRehearsal()
     void loadSnapshots()
   }
@@ -377,6 +384,13 @@ export default function Rehearsal() {
         onFinished={onJobFinished}
       />
 
+      {lastFailure && (
+        <div className="result-box error" style={{ marginTop: 12 }}>
+          <strong>Rehearsal failed:</strong>
+          <div style={{ marginTop: 6, whiteSpace: 'pre-wrap' }}>{lastFailure}</div>
+        </div>
+      )}
+
       {env && (
         <>
           <div className="card" style={{ marginTop: 16 }}>
@@ -418,7 +432,17 @@ export default function Rehearsal() {
         onConfirm={handleStop}
         onCancel={() => setConfirmStop(false)}
         busy={stopping}
-      />
+        >
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
+            <input
+              type="checkbox"
+              checked={forceCleanup}
+              onChange={e => setForceCleanup(e.target.checked)}
+              disabled={stopping}
+            />
+            Force cleanup if containers are still running
+          </label>
+        </ConfirmDialog>
     </>
   )
 }

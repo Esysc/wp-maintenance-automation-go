@@ -79,6 +79,7 @@ export default function Rehearsal() {
   const [forceCleanup, setForceCleanup] = useState(false)
   const { toast } = useToast()
   const { t } = useLanguage()
+  const rehearsalInProgress = starting || !!activeJobId || envActive
 
   function renderInventoryBlock(title: string, inv?: RehearsalInventory) {
     if (!inv) return null
@@ -351,7 +352,7 @@ export default function Rehearsal() {
         <SiteHint />
       )}
 
-      {siteId && !env && (
+      {siteId && !rehearsalInProgress && !env && (
         <div className="card">
           <h3>{t('rehearsal_start_title')}</h3>
           <p>{t('rehearsal_start_desc')}</p>

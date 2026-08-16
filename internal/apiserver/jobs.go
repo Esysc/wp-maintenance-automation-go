@@ -798,7 +798,65 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
-		setStatus("running", "Collecting inventory (after upgrade)...", 80)
+		setStatus("running", "Running healthcheck on upgraded rehearsal environment...", 75)
+		healthcheckOpts := staging.DefaultHealthcheckOptions(env.HealthURL)
+		healthcheckResult, healthcheckErr := staging.CheckStagingHealth(healthcheckOpts)
+		if healthcheckErr != nil {
+			healthcheckSteps := rehearsalUpgradeStep{
+				Name:    "staging healthcheck",
+				Command: "healthcheck",
+				Output:  healthcheckErr.Error(),
+				Success: false,
+			}
+			upgradeSteps = append(upgradeSteps, healthcheckSteps)
+			setStatus("running", "Healthcheck failed, continuing with rollback...", 80)
+		} else {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "staging healthcheck",
+				Command: "healthcheck",
+				Output:  healthcheckResult.Message,
+				Success: healthcheckResult.Passed,
+			})
+			setStatus("running", "Healthcheck passed, collecting inventory (after upgrade)...", 80)
+		}
+
+		prodURL := tuple.req.HealthcheckURL
+		if prodURL == "" {
+			prodURL = site.HealthcheckURL
+		}
+
+		comparisonErr := error(nil)
+		if strings.TrimSpace(prodURL) != "" {
+			setStatus("running", "Comparing production and rehearsal pages...", 82)
+			comparisonResult, err := staging.CompareStagingPages(prodURL, env.HealthURL, healthcheckOpts)
+			if err != nil {
+				comparisonErr = err
+				upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+					Name:    "production vs rehearsal homepage comparison",
+					Command: "compare pages",
+					Output:  err.Error(),
+					Success: false,
+				})
+			} else {
+				if !comparisonResult.Passed {
+					comparisonErr = fmt.Errorf("%s", comparisonResult.Message)
+				}
+				upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+					Name:    "production vs rehearsal homepage comparison",
+					Command: "compare pages",
+					Output:  comparisonResult.Message,
+					Success: comparisonResult.Passed,
+				})
+			}
+		} else {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "production vs rehearsal homepage comparison",
+				Command: "compare pages",
+				Output:  "skipped: production healthcheck_url is not configured",
+				Success: true,
+			})
+		}
+
 		inventoryAfter, err := collectRehearsalInventory(env)
 		if err != nil {
 			setError("failed to collect upgraded rehearsal inventory: " + err.Error())
@@ -822,6 +880,11 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		inventoryRollback, err := collectRehearsalInventory(rolledBackEnv)
 		if err != nil {
 			setError("failed to collect rollback rehearsal inventory: " + err.Error())
+			return
+		}
+
+		if comparisonErr != nil {
+			setError("production and rehearsal page comparison failed: " + comparisonErr.Error())
 			return
 		}
 

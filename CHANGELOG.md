@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-16
+
+### Changed
+- Site detect-config now treats `wp_root` values `/` and `.` as auto-detect mode, and prioritizes discovery from the SSH login working directory before broader filesystem fallback.
+- Detect-config input handling was tightened: when a `wp_root` is explicitly provided, parsing is performed only for that path (no implicit default-path fallback).
+- SSH key input handling was hardened to normalize escaped newlines and improve key material/path interpretation.
+
+### Fixed
+- SSH detect-config now returns stage-specific diagnostics (preflight connect/auth, WordPress root detection, and DB config parse) instead of generic failures.
+- Detect-config now supports more real-world WordPress layouts: deeper root scan depth, `wp-includes/version.php`-based root detection, and parent-directory fallback for `wp-config.php`.
+- Key-auth diagnostics now clearly distinguish invalid key payloads, unreadable key paths, and accidentally pasted public keys in the private-key field.
+- Sites UI detect-config flow now surfaces backend error details reliably and uses a multiline SSH private key field to avoid truncation/formatting issues.
+
 ## [0.5.0] - 2026-08-16
 
 ### Added

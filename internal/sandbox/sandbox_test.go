@@ -1,52 +1,96 @@
-// Package sandbox_test provides unit tests for the sandbox package.
-//
-// These tests verify the retry behavior for transient errors in sandbox provisioning
-// and ensure proper error handling for state persistence operations.
 package sandbox
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestWpArgsRetry_Exists(t *testing.T) {
-	// Test that wpArgsRetry function exists and has the expected signature
-	// This test verifies that the retry functionality is available
+func TestWpArgsRetry_RetriesUntilSuccess(t *testing.T) {
+	manager := &Manager{}
+	attempts := 0
+	manager.wpRunner = func(args ...string) (string, error) {
+		attempts++
+		if attempts < 3 {
+			return "", errors.New("transient wp-cli failure")
+		}
+		return "ok", nil
+	}
 
-	// Test that wpArgsRetry exists and can be called
-	// We can't actually test the retry logic without a real Docker environment
-	// but we can verify the function exists and has the right structure
-
-	// This is a basic test to ensure the function is callable
-	// In a real environment, this would require mocking wpArgs
-	if testing.Short() {
-		t.Skip("Skipping sandbox integration tests in short mode")
+	start := time.Now()
+	out, err := manager.wpArgsRetry("option", "update", "siteurl", "https://example.test")
+	if err != nil {
+		t.Fatalf("expected success after retries, got error: %v", err)
+	}
+	if out != "ok" {
+		t.Fatalf("expected output %q, got %q", "ok", out)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+	if elapsed := time.Since(start); elapsed < 1400*time.Millisecond {
+		t.Fatalf("expected retry backoff to take noticeable time, got %s", elapsed)
 	}
 }
 
-func TestMustRead_ErrorHandling(t *testing.T) {
-	// Test that mustRead properly handles file read errors
+func TestWpArgsRetry_ReturnsLastError(t *testing.T) {
+	manager := &Manager{}
+	attempts := 0
+	manager.wpRunner = func(args ...string) (string, error) {
+		attempts++
+		return "", errors.New("persistent wp-cli failure")
+	}
 
-	// Test with a non-existent file
-	result := mustRead("/non/existent/file.txt")
-	if result != "" {
-		t.Fatalf("Expected empty string for non-existent file, got: %s", result)
+	out, err := manager.wpArgsRetry("rewrite", "structure", "/%postname%/")
+	if err == nil {
+		t.Fatal("expected error after retries, got nil")
+	}
+	if out != "" {
+		t.Fatalf("expected empty output on failure, got %q", out)
+	}
+	if attempts != 3 {
+		t.Fatalf("expected 3 attempts, got %d", attempts)
+	}
+	if !strings.Contains(err.Error(), "persistent wp-cli failure") {
+		t.Fatalf("expected last error to be returned, got %v", err)
 	}
 }
 
-func TestSaveState_Exists(t *testing.T) {
-	// Test that saveState function exists and has the expected signature
-	// This test verifies that the saveState function is available for error handling
+func TestMustRead_ReturnsEmptyStringWhenMissing(t *testing.T) {
+	if got := mustRead(filepath.Join(t.TempDir(), "missing.txt")); got != "" {
+		t.Fatalf("expected empty string for missing file, got %q", got)
+	}
+}
 
-	// Test that saveState exists and can be called
-	// We can't actually test the save functionality without proper setup
-	// but we can verify the function exists and has the right structure
+func TestSaveState_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	manager := &Manager{DataDir: dir}
+	state := &State{SiteID: "site-1", Broken: true, LastAction: "broken", HealthURL: "https://sandbox.test"}
 
-	// This is a basic test to ensure the function is callable
-	// In a real environment, this would require proper test setup
+	if err := manager.saveState(state); err != nil {
+		t.Fatalf("saveState returned error: %v", err)
+	}
 
-	// The key test is that saveState exists and has the expected signature
-	// This ensures the function is available for error handling tests
-	if testing.Short() {
-		t.Skip("Skipping sandbox integration tests in short mode")
+	loaded := manager.loadState()
+	if loaded == nil {
+		t.Fatal("expected state to load back, got nil")
+	}
+	if loaded.SiteID != state.SiteID || loaded.LastAction != state.LastAction || !loaded.Broken {
+		t.Fatalf("loaded state mismatch: %#v", loaded)
+	}
+}
+
+func TestSaveState_ReturnsErrorWhenDataDirIsAFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(file, []byte("x"), 0600); err != nil {
+		t.Fatalf("failed to create sentinel file: %v", err)
+	}
+
+	manager := &Manager{DataDir: file}
+	if err := manager.saveState(&State{SiteID: "site-1"}); err == nil {
+		t.Fatal("expected saveState to fail when DataDir is a file, got nil")
 	}
 }

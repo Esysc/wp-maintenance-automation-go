@@ -48,6 +48,7 @@ type Manager struct {
 	DataDir      string
 	BuildContext string
 	Database     *db.Database
+	wpRunner     func(args ...string) (string, error)
 }
 
 type State struct {
@@ -463,10 +464,17 @@ func (m *Manager) wpArgs(args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+func (m *Manager) runWpArgs(args ...string) (string, error) {
+	if m.wpRunner != nil {
+		return m.wpRunner(args...)
+	}
+	return m.wpArgs(args...)
+}
+
 func (m *Manager) wpArgsRetry(args ...string) (string, error) {
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		out, err := m.wpArgs(args...)
+		out, err := m.runWpArgs(args...)
 		if err == nil {
 			return out, nil
 		}

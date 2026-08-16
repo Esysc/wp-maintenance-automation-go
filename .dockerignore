@@ -4,6 +4,7 @@ data/
 logs/
 backup_artifacts/
 restore/
+sandbox-data/
 node_modules/
 .git/
 .DS_Store

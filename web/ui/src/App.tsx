@@ -13,6 +13,7 @@ import Backups from './pages/Backups'
 import Restore from './pages/Restore'
 import Upgrade from './pages/Upgrade'
 import Rehearsal from './pages/Rehearsal'
+import Sandbox from './pages/Sandbox'
 import Snapshots from './pages/Snapshots'
 import Sites from './pages/Sites'
 import Users from './pages/Users'
@@ -64,6 +65,7 @@ function App() {
             <Route path="/restore" element={<AuthGuard><Restore /></AuthGuard>} />
             <Route path="/upgrade" element={<AuthGuard><Upgrade /></AuthGuard>} />
             <Route path="/rehearsal" element={<AuthGuard><Rehearsal /></AuthGuard>} />
+            <Route path="/sandbox" element={<AuthGuard><Sandbox /></AuthGuard>} />
             <Route path="/snapshots" element={<AuthGuard><Snapshots /></AuthGuard>} />
             <Route path="/sites" element={<AuthGuard><Sites /></AuthGuard>} />
             <Route path="/users" element={<AuthGuard><Users /></AuthGuard>} />

@@ -39,6 +39,9 @@ restore/
 # Data directories
 data/
 
+# Sandbox runtime data (SSH keys, restic repo, state)
+sandbox-data/
+
 # IDE specific files
 .vscode/
 .idea/

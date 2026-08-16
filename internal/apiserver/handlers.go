@@ -791,6 +791,11 @@ func (s *APIServer) handleSiteByID(w http.ResponseWriter, r *http.Request) {
 
 	case "DELETE":
 		if err := s.Database.DeleteSite(siteID); err != nil {
+			errMsg := strings.ToLower(err.Error())
+			if strings.Contains(errMsg, "foreign key") || strings.Contains(errMsg, "constraint") {
+				apiErr(w, http.StatusConflict, "cannot delete site: remove related backups first")
+				return
+			}
 			apiErr(w, http.StatusInternalServerError, "failed to delete site")
 			return
 		}
@@ -840,7 +845,7 @@ func (s *APIServer) handleDetectConfig(w http.ResponseWriter, r *http.Request) {
 
 	sshOpts := ssh.NewSSHOptions(req.SSHHost, req.SSHUser, req.SSHPort)
 	sshOpts.Key = req.SSHKey
-	sshClient := ssh.NewClient(sshOpts)
+	sshClient := s.newSSHClient(sshOpts)
 	defer sshClient.Close()
 
 	wpRoot := req.WPRoot

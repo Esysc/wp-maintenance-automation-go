@@ -6,14 +6,30 @@ import (
 	"strings"
 
 	_ "github.com/lib/pq"
+	_ "modernc.org/sqlite"
 )
 
 type Database struct {
 	*sql.DB
+	driver string
+}
+
+// driverFor selects the database driver based on the connection string.
+// Production uses PostgreSQL key=value DSNs (or postgres:// URLs) while
+// tests pass a plain file path which selects the embedded SQLite driver.
+func driverFor(connStr string) string {
+	connStr = strings.TrimSpace(connStr)
+	if strings.HasPrefix(connStr, "postgres://") ||
+		strings.HasPrefix(connStr, "postgresql://") ||
+		strings.Contains(connStr, "=") {
+		return "postgres"
+	}
+	return "sqlite"
 }
 
 func New(connStr string) (*Database, error) {
-	db, err := sql.Open("postgres", connStr)
+	driver := driverFor(connStr)
+	db, err := sql.Open(driver, connStr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -26,7 +42,7 @@ func New(connStr string) (*Database, error) {
 		return nil, fmt.Errorf("failed to init schema: %w", err)
 	}
 
-	database := &Database{DB: db}
+	database := &Database{DB: db, driver: driver}
 	if err := database.migrateUserProfileFields(); err != nil {
 		return nil, fmt.Errorf("failed to migrate user profile fields: %w", err)
 	}
@@ -64,14 +80,23 @@ func pgPlaceholders(query string) string {
 }
 
 func (db *Database) Exec(query string, args ...interface{}) (sql.Result, error) {
+	if db.driver == "sqlite" {
+		return db.DB.Exec(query, args...)
+	}
 	return db.DB.Exec(pgPlaceholders(query), args...)
 }
 
 func (db *Database) Query(query string, args ...interface{}) (*sql.Rows, error) {
+	if db.driver == "sqlite" {
+		return db.DB.Query(query, args...)
+	}
 	return db.DB.Query(pgPlaceholders(query), args...)
 }
 
 func (db *Database) QueryRow(query string, args ...interface{}) *sql.Row {
+	if db.driver == "sqlite" {
+		return db.DB.QueryRow(query, args...)
+	}
 	return db.DB.QueryRow(pgPlaceholders(query), args...)
 }
 
@@ -171,6 +196,26 @@ func initSchema(db *sql.DB) error {
 }
 
 func (db *Database) hasColumn(table, column string) (bool, error) {
+	if db.driver == "sqlite" {
+		rows, err := db.DB.Query("PRAGMA table_info(" + table + ")")
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid, notnull, pk int
+			var name, typ string
+			var dflt interface{}
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				return false, err
+			}
+			if name == column {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+
 	query := `SELECT column_name FROM information_schema.columns WHERE table_name = $1 AND column_name = $2`
 	rows, err := db.DB.Query(query, table, column)
 	if err != nil {
@@ -221,19 +266,42 @@ func (db *Database) migrateSiteSSHKey() error {
 }
 
 func (db *Database) migrateDropStagingHostFields() error {
-	rows, err := db.DB.Query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'sites'`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
 	columns := make(map[string]bool)
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+
+	if db.driver == "sqlite" {
+		rows, err := db.DB.Query("PRAGMA table_info(sites)")
+		if err != nil {
 			return err
 		}
-		columns[name] = true
+		for rows.Next() {
+			var cid, notnull, pk int
+			var name, typ string
+			var dflt interface{}
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				rows.Close()
+				return err
+			}
+			columns[name] = true
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+	} else {
+		rows, err := db.DB.Query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'sites'`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				rows.Close()
+				return err
+			}
+			columns[name] = true
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
 	}
 
 	for _, col := range []string{"staging_host", "staging_port", "staging_user", "staging_root"} {

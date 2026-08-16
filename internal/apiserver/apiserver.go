@@ -23,6 +23,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/sandbox"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 )
@@ -32,10 +33,31 @@ type APIServer struct {
 	Database       *db.Database
 	Checker        *healthcheck.Checker
 	Restic         *restic.ResticClient
-	SSHClient      *ssh.Client
+	NewSSHClient   func(opts *ssh.SSHOptions) ssh.Client
 	StagingManager *staging.Manager
+	Sandbox        *sandbox.Manager
 	jobQueue       chan *jobTuple
 	workerOnce     sync.Once
+}
+
+// sandboxDataDir returns the directory used to store sandbox state (SSH keys,
+// restic repository, compose file). Defaults to ./sandbox-data, overridable
+// with SANDBOX_DIR.
+func sandboxDataDir() string {
+	if dir := os.Getenv("SANDBOX_DIR"); dir != "" {
+		return dir
+	}
+	return "./sandbox-data"
+}
+
+// newSSHClient returns a client for the given SSH options, using the
+// injectable factory when set (used by tests) and the real SSH client by
+// default.
+func (s *APIServer) newSSHClient(opts *ssh.SSHOptions) ssh.Client {
+	if s.NewSSHClient != nil {
+		return s.NewSSHClient(opts)
+	}
+	return ssh.NewClient(opts)
 }
 
 func Run() {
@@ -111,7 +133,9 @@ func Run() {
 		Database:       database,
 		Checker:        checker,
 		Restic:         resticClient,
+		NewSSHClient:   func(opts *ssh.SSHOptions) ssh.Client { return ssh.NewClient(opts) },
 		StagingManager: staging.NewManager("./staging"),
+		Sandbox:        sandbox.NewManager(sandboxDataDir(), "./staging", database),
 		jobQueue:       make(chan *jobTuple, jobQueueSize),
 	}
 
@@ -157,6 +181,13 @@ func Run() {
 
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleJobByID))
+
+	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleSandbox))
+	mux.HandleFunc("/api/v1/sandbox/", s.authMiddleware(s.handleSandbox))
+
+	// Sandbox site served through the app so the browser can view it.
+	mux.HandleFunc("/sandbox-site", s.authMiddleware(s.handleSandboxSite))
+	mux.HandleFunc("/sandbox-site/", s.authMiddleware(s.handleSandboxSite))
 
 	handler := corsMiddleware(mux)
 

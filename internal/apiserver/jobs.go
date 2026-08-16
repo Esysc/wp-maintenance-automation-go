@@ -145,9 +145,16 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		return
 	}
 
+	if s.Sandbox != nil && s.Sandbox.IsSandboxSiteID(job.SiteID) {
+		if err := s.Sandbox.ConnectToNetwork(); err != nil {
+			setError("sandbox network not reachable: " + err.Error())
+			return
+		}
+	}
+
 	sshOpts := ssh.NewSSHOptions(site.WPSSHHost, site.WPSSHUser, site.WPSSHPort)
 	sshOpts.Key = site.WPSSHKey
-	sshClient := ssh.NewClient(sshOpts)
+	sshClient := s.newSSHClient(sshOpts)
 	defer sshClient.Close()
 
 	wpRoot := site.WPRoot
@@ -248,7 +255,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 		fileCount := 0
 		rsyncExcludes := []string{"wp-content/cache/"}
-		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", rsyncExcludes, false, func(relPath string) {
+		if err := sshClient.SyncDir(wpRoot+"/", wpDir+"/", true, rsyncExcludes, false, func(relPath string) {
 			fileCount++
 			pct := 60
 			if totalFiles > 0 {
@@ -474,7 +481,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			}
 			fileCount := 0
 			rsyncExcludes := []string{"wp-content/cache/"}
-			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", rsyncExcludes, true, func(relPath string) {
+			if err := sshClient.SyncDir(wpDir+"/", wpRoot+"/", false, rsyncExcludes, true, func(relPath string) {
 				fileCount++
 				pct := 75
 				if totalFiles > 0 {
@@ -488,6 +495,12 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		log.Printf("restore completed for site %s: snapshot=%s", site.Name, tuple.req.SnapshotID)
+		if s.Sandbox != nil && s.Sandbox.IsSandboxSiteID(job.SiteID) {
+			if err := s.Sandbox.ReapplySiteURL(); err != nil {
+				log.Printf("sandbox: warning: %v", err)
+			}
+			s.Sandbox.MarkRestored()
+		}
 		setResult(fmt.Sprintf(`{"snapshot_id":"%s","apply_db":%t,"apply_files":%t}`, tuple.req.SnapshotID, tuple.req.ApplyDB, tuple.req.ApplyFiles))
 
 	case "upgrade":

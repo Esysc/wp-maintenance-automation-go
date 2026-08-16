@@ -1,0 +1,46 @@
+# Docker Compose file for the local "sandbox" test site.
+# Spins up a production-like WordPress (Apache + PHP + OpenSSH) plus MariaDB,
+# all isolated on the loopback interface. The API server manages the site over
+# SSH exactly like a real production host, so backup/restore drills exercise
+# the real pipeline.
+#
+# Values are injected via environment variables by the sandbox Manager.
+services:
+  db:
+    image: mariadb:10.11
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: ${SANDBOX_DB_NAME:-sandbox}
+      MYSQL_USER: ${SANDBOX_DB_USER:-sandbox}
+      MYSQL_PASSWORD: ${SANDBOX_DB_PASSWORD:-sandboxpass}
+    command:
+      - --max-allowed-packet=1G
+      - --net-read-timeout=600
+      - --net-write-timeout=600
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-u", "root", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  wp:
+    build:
+      context: ${BUILD_CONTEXT:-.}
+      dockerfile: Dockerfile.wp
+      args:
+        WP_VERSION: ${WP_VERSION:-6.6.2}
+        WP_PHP_VERSION: ${WP_PHP_VERSION:-8.2}
+        SSH_AUTHORIZED_KEYS: ${SANDBOX_SSH_AUTHORIZED_KEYS:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: ${SANDBOX_DB_USER:-sandbox}
+      WORDPRESS_DB_PASSWORD: ${SANDBOX_DB_PASSWORD:-sandboxpass}
+      WORDPRESS_DB_NAME: ${SANDBOX_DB_NAME:-sandbox}
+    ports:
+      - "127.0.0.1::22"
+      - "127.0.0.1::80"
+      - "127.0.0.1::443"

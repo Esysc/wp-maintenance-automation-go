@@ -77,7 +77,13 @@ export function MetricsProvider({ children }: { children: ReactNode }) {
     try {
       const mr = await apiGet<MetricsData>('/api/v1/metrics')
       setMetricsRaw(JSON.stringify(mr, null, 2))
-      if (mr.success && mr.data) setMetrics(mr.data)
+      if (mr.success && mr.data) {
+        setMetrics(mr.data)
+      } else if (!mr.success) {
+        setMetricsRaw(JSON.stringify({ success: false, error: mr.error || 'metrics unavailable' }, null, 2))
+      }
+    } catch (e: any) {
+      setMetricsRaw(JSON.stringify({ success: false, error: e?.message || 'failed to fetch metrics' }, null, 2))
     } finally {
       inFlight.current = false
       setLoading(false)

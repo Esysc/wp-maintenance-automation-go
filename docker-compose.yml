@@ -41,6 +41,7 @@ services:
       - ./logs:/app/logs
       - ./backup_artifacts:/app/backup_artifacts
       - ./restore:/app/restore
+      - ./sandbox-data:/app/sandbox-data
       - ~/.ssh:/root/.ssh:ro
       - ${SSH_AUTH_SOCK:-/dev/null}:/ssh-agent.sock:ro
       - /var/run/docker.sock:/var/run/docker.sock

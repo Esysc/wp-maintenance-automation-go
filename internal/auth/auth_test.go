@@ -98,12 +98,12 @@ func TestAuthenticateAfterPasswordChange(t *testing.T) {
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
 
-	err := am.ChangePassword(adminID, "newpassword456")
+	err := am.ChangePassword(adminID, "Newpassword456")
 	if err != nil {
 		t.Fatalf("failed to change password: %v", err)
 	}
 
-	user, err := am.Authenticate("admin", "newpassword456")
+	user, err := am.Authenticate("admin", "Newpassword456")
 	if err != nil {
 		t.Fatalf("authentication failed after password change: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestAuthenticateInvalidCredentials(t *testing.T) {
 
 	users, _ := am.LoadUsers()
 	adminID := users[0].ID
-	am.ChangePassword(adminID, "newpassword456")
+	am.ChangePassword(adminID, "Newpassword456")
 
 	_, err := am.Authenticate("admin", "wrongpassword")
 	if err != ErrInvalidCredentials {

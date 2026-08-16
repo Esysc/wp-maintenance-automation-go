@@ -4,6 +4,38 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+## [0.5.0] - 2026-08-16
+
+### Added
+- The sandbox site is now viewable in the browser: the app serves the local WordPress site through the API/web proxy at `/sandbox-site`, exposes its public URL on the sandbox status payload, and the Sandbox page offers an "Open in popup" button.
+- Live sandbox start logs: startup progress is streamed to the UI over Server-Sent Events (`GET /api/v1/sandbox/start/logs`) and appears as it happens instead of only after the sandbox has finished starting.
+- Sandbox site deletion: `DELETE /api/v1/sandbox` stops the sandbox containers, removes the site record with all of its backups from the database, and wipes the sandbox data directory; the Sandbox page exposes this in a danger-zone card.
+- Production-like sandbox drill support for validating backup and restore workflows against a real WordPress stack running locally via Docker.
+- New sandbox API endpoints under `/api/v1/sandbox` for starting, checking, breaking, stopping, and deleting the local test site (backup/restore use `/api/v1/backup` and `/api/v1/restore`).
+- Sandbox page in the web UI to exercise the full end-to-end backup/restore disaster drill without touching a live production server.
+- E2E fake-production restore tests that seed a realistic WordPress installation, back it up through the real SSH + restic pipeline, intentionally break it, and verify the restore exactly matches the original state.
+- Real restic snapshot validation in the sandbox flow, using actual repository creation, backup snapshots, and restore operations instead of mocked backup metadata.
+
+### Changed
+- The sandbox now runs fully containerized: the API server resolves the sandbox web container's network address (and rejoins the sandbox network on demand) instead of relying on host-loopback port publishing.
+- Sandbox runtime data (SSH keys, restic repository, state) is persisted in a Docker volume (`sandbox-data/`), so it survives container/image rebuilds.
+- The break drill now requires at least one backup before it can be triggered, so the site can always be recovered.
+- Sandbox page polish: backup/restore/break/stop buttons are disabled while a job is running, completion notes are shown after backup/restore jobs finish, the backup dropdown auto-refreshes and selects the newest snapshot, and the stop/drill descriptions were clarified.
+- Sandbox UI strings are kept in sync across all nine locales.
+- README feature overview and core capability list now document the sandbox disaster-drill workflow alongside staging rehearsal and restore flows.
+- Added focused tests for sandbox retry/state handling and restic helpers to improve repository coverage.
+
+### Fixed
+- WordPress `.htaccess` rewrite rules are now restored on start and re-applied after a stop/start or a restore, so pretty permalinks keep working on the sandbox site.
+- Deleting a site now removes its related rows (jobs and backups) transactionally, and the API returns a clear 409 when related data prevents deletion instead of failing with an opaque error.
+- Metrics fetch failures no longer break the UI (the metrics panel degrades gracefully) and no longer conflict with site deletion.
+- Sandbox state persistence errors are surfaced instead of being silently ignored, and wp-cli seeding is retried to reduce flakiness.
+- Database layer now supports both PostgreSQL production DSNs and SQLite test file paths, including the schema migration checks used in unit tests.
+- Fake SSH test client and restore job logic were aligned with the real `ssh.Client` interface (`SyncDir` signature and source/destination direction handling), allowing the end-to-end fake-production restore drill to compile and pass reliably.
+- Restic backup parsing is more resilient: successful snapshot output is parsed back into a snapshot ID so the backup/restore workflow can continue even when the CLI emits opportunistic output beyond the strict JSON payload.
+
 ## [0.4.0] - 2026-08-01
 
 ### Changed

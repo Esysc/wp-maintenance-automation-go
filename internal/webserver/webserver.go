@@ -15,6 +15,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +27,7 @@ type WebServer struct {
 	apiBaseURL string
 	apiToken   string
 	client     *http.Client
+	longClient *http.Client
 	staticDir  string
 }
 
@@ -49,6 +52,12 @@ func Run() {
 		apiToken:   os.Getenv("WP_MAINTENANCE_TOKEN"),
 		client: &http.Client{
 			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		},
+		longClient: &http.Client{
+			Timeout: 15 * time.Minute,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 			},
@@ -98,6 +107,8 @@ func Run() {
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
+	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleAPISandbox))
+	mux.HandleFunc("/api/v1/sandbox/", s.authMiddleware(s.handleAPISandbox))
 	mux.HandleFunc("/api/v1/metrics", s.authMiddleware(s.handleAPIMetrics))
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
@@ -105,6 +116,7 @@ func Run() {
 	mux.Handle("/ui/assets/", http.StripPrefix("/ui/", http.FileServer(http.Dir(filepath.Join(staticDir, "ui")))))
 	mux.HandleFunc("/ui/", s.handleUISPA)
 	mux.HandleFunc("/ui", s.handleUISPA)
+	mux.HandleFunc("/sandbox-site/", s.handleSandboxSite)
 
 	tlsDisable := os.Getenv("WEB_TLS_DISABLE")
 
@@ -439,7 +451,51 @@ func (s *WebServer) proxyAuth(apiReq *http.Request, r *http.Request) {
 	}
 }
 
-func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {
+// forwardedHeaders lets the API server know the public host and TLS scheme of
+// the original request, which the sandbox needs to publish a browser-reachable
+// site URL. The web server may sit behind Caddy, which already sets
+// X-Forwarded-* headers; those are propagated unchanged when present.
+func (s *WebServer) forwardedHeaders(apiReq *http.Request, r *http.Request) {
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	apiReq.Header.Set("X-Forwarded-Host", host)
+
+	proto := r.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+	apiReq.Header.Set("X-Forwarded-Proto", proto)
+}
+
+// handleSandboxSite proxies /sandbox-site/* to the API server, which in turn
+// serves the sandbox WordPress site over the Docker-internal network. This
+// lets the browser open the sandbox site through the application's own URL.
+func (s *WebServer) handleSandboxSite(w http.ResponseWriter, r *http.Request) {
+	apiURL, err := url.Parse(s.apiBaseURL)
+	if err != nil {
+		http.Error(w, "invalid api url", http.StatusInternalServerError)
+		return
+	}
+
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = apiURL.Scheme
+			req.URL.Host = apiURL.Host
+			req.Host = apiURL.Host
+			s.proxyAuth(req, r)
+			s.forwardedHeaders(req, r)
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func (s *WebServer) proxyRequestWithClient(w http.ResponseWriter, r *http.Request, path string, client *http.Client) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -455,8 +511,9 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 	apiReq.Header.Set("Content-Type", "application/json")
 
 	s.proxyAuth(apiReq, r)
+	s.forwardedHeaders(apiReq, r)
 
-	resp, err := s.client.Do(apiReq)
+	resp, err := client.Do(apiReq)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -467,6 +524,10 @@ func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path st
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
+}
+
+func (s *WebServer) proxyRequest(w http.ResponseWriter, r *http.Request, path string) {
+	s.proxyRequestWithClient(w, r, path, s.client)
 }
 
 func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, basePath, id string) {
@@ -497,6 +558,40 @@ func (s *WebServer) proxyRequestWithID(w http.ResponseWriter, r *http.Request, b
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
 	w.Write(respBody)
+}
+
+func (s *WebServer) handleAPISandbox(w http.ResponseWriter, r *http.Request) {
+	// The start-logs endpoint streams Server-Sent Events; use a streaming
+	// reverse proxy so the UI can show startup progress live.
+	if strings.HasPrefix(r.URL.Path, "/api/v1/sandbox/start/logs") {
+		s.proxyStreaming(w, r)
+		return
+	}
+	// Preserve the full path (status/start/break/stop) and use a long-timeout
+	// client because starting the sandbox can take minutes (Docker image
+	// build on first run).
+	s.proxyRequestWithClient(w, r, r.URL.Path, s.longClient)
+}
+
+// proxyStreaming proxies a request to the API server without buffering the
+// response body, preserving headers and flushing as data arrives so SSE
+// streams flow through to the browser.
+func (s *WebServer) proxyStreaming(w http.ResponseWriter, r *http.Request) {
+	apiURL, err := url.Parse(s.apiBaseURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	proxy := &httputil.ReverseProxy{
+		FlushInterval: 100 * time.Millisecond,
+		Director: func(req *http.Request) {
+			req.URL.Scheme = apiURL.Scheme
+			req.URL.Host = apiURL.Host
+			s.proxyAuth(req, r)
+			s.forwardedHeaders(req, r)
+		},
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (s *WebServer) handleUISPA(w http.ResponseWriter, r *http.Request) {

@@ -3,7 +3,7 @@ import { apiGet, apiPost } from '../api/client'
 import { useLanguage } from '../context/LanguageContext'
 import { jobTypeLabel, jobStatusLabel, progressLabel } from '../i18n'
 
-interface Job {
+export interface Job {
   id: string
   type: string
   site_id: string
@@ -19,9 +19,11 @@ interface Props {
   jobType?: string
   siteId: string
   onReady?: (jobId: string) => void
+  onActiveChange?: (active: boolean) => void
+  onFinished?: (job: Job) => void
 }
 
-export default function JobStatus({ jobType, siteId, onReady }: Props) {
+export default function JobStatus({ jobType, siteId, onReady, onActiveChange, onFinished }: Props) {
   const [job, setJob] = useState<Job | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const intervalRef = useRef<number | undefined>(undefined)
@@ -41,6 +43,7 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
       const j = res.data
       if (j.status === 'running' || j.status === 'queued') {
         setJob(j)
+        onActiveChange?.(true)
         poll(j.id)
       } else {
         setJob(null)
@@ -57,7 +60,9 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
         if (j.status === 'completed' || j.status === 'failed' || j.status === 'cancelled') {
           setJob(null)
           if (intervalRef.current) clearInterval(intervalRef.current)
+          onActiveChange?.(false)
           if (j.status === 'completed' && onReady) onReady(jobId)
+          if (onFinished) onFinished(j)
           return
         }
         setJob(j)
@@ -73,6 +78,7 @@ export default function JobStatus({ jobType, siteId, onReady }: Props) {
     } catch { /* ignore */ }
     setJob(null)
     if (intervalRef.current) clearInterval(intervalRef.current)
+    onActiveChange?.(false)
     setCancelling(false)
   }
 

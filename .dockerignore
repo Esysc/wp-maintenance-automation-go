@@ -1,0 +1,11 @@
+caddy_data/
+caddy_config/
+data/
+logs/
+backup_artifacts/
+restore/
+sandbox-data/
+node_modules/
+.git/
+.DS_Store
+test-results/

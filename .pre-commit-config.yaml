@@ -15,7 +15,7 @@ repos:
       - id: go-fmt
         name: Go format check
         entry: >-
-          bash -c 'ROOT="$(git rev-parse --show-toplevel)" && go -C "$ROOT" fmt ./... >/dev/null 2>&1'
+          bash -c 'ROOT="$(git rev-parse --show-toplevel)" && go -C "$ROOT" fmt ./cmd/... ./internal/... ./pkg/... >/dev/null 2>&1'
         language: system
         types: [go]
         pass_filenames: false
@@ -23,7 +23,7 @@ repos:
       - id: go-build
         name: Go compile check
         entry: >-
-          bash -c 'ROOT="$(git rev-parse --show-toplevel)"; AVAIL_KB="$(df -Pk "$ROOT" | tail -1 | tr -s " " | cut -d " " -f4)"; if [ "${AVAIL_KB:-0}" -lt 262144 ]; then echo "Skipping Go compile check: low disk space (${AVAIL_KB}KB available)."; exit 0; fi; go -C "$ROOT" vet ./... >/dev/null 2>&1'
+          bash -c 'ROOT="$(git rev-parse --show-toplevel)"; AVAIL_KB="$(df -Pk "$ROOT" | tail -1 | tr -s " " | cut -d " " -f4)"; if [ "${AVAIL_KB:-0}" -lt 262144 ]; then echo "Skipping Go compile check: low disk space (${AVAIL_KB}KB available)."; exit 0; fi; go -C "$ROOT" vet ./cmd/... ./internal/... ./pkg/... >/dev/null 2>&1'
         language: system
         types: [go]
         pass_filenames: false

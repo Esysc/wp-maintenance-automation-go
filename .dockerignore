@@ -1,0 +1,10 @@
+caddy_data/
+caddy_config/
+data/
+logs/
+backup_artifacts/
+restore/
+node_modules/
+.git/
+.DS_Store
+test-results/

@@ -23,6 +23,7 @@ interface Backup {
 export default function Backups() {
   const { siteId, setSiteId } = useSite()
   const [backups, setBackups] = useState<Backup[]>([])
+  const [jobRefreshToken, setJobRefreshToken] = useState(0)
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -53,6 +54,7 @@ export default function Backups() {
       const res = await apiPost<{ job_id: string }>('/api/v1/backup', { site_id: siteId })
       if (res.success) {
         toast(t('backup_queued'), 'info')
+        setJobRefreshToken(v => v + 1)
       } else {
         toast(res.error || t('backup_failed'), 'error')
       }
@@ -134,7 +136,12 @@ export default function Backups() {
         </div>
       )}
 
-      <JobStatus jobType="backup" siteId={siteId} />
+      <JobStatus
+        jobType="backup"
+        siteId={siteId}
+        refreshToken={jobRefreshToken}
+        onFinished={() => { if (siteId) loadBackups() }}
+      />
       <JobHistory jobType="backup" siteId={siteId} />
 
       <ConfirmDialog

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/upgrade"
 )
 
@@ -28,6 +30,23 @@ type jobRequest struct {
 	ApplyDB        bool   `json:"apply_db"`
 	ApplyFiles     bool   `json:"apply_files"`
 	Confirm        bool   `json:"confirm"`
+	PublicHost     string `json:"public_host,omitempty"`
+}
+
+func forwardedPublicHost(r *http.Request) string {
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return ""
+	}
+	if h, p, err := net.SplitHostPort(host); err == nil {
+		if p != "" && h != "" {
+			return h
+		}
+	}
+	return host
 }
 
 func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) {
@@ -55,6 +74,174 @@ func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) 
 type jobTuple struct {
 	job *db.Job
 	req jobRequest
+}
+
+type rehearsalComponent struct {
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Status        string `json:"status,omitempty"`
+	Update        string `json:"update,omitempty"`
+	UpdateVersion string `json:"update_version,omitempty"`
+	AutoUpdate    string `json:"auto_update,omitempty"`
+}
+
+type rehearsalInventory struct {
+	CoreVersion string               `json:"core_version"`
+	Plugins     []rehearsalComponent `json:"plugins"`
+	Themes      []rehearsalComponent `json:"themes"`
+}
+
+type rehearsalUpgradeStep struct {
+	Name    string `json:"name"`
+	Command string `json:"command"`
+	Output  string `json:"output"`
+	Success bool   `json:"success"`
+}
+
+func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, error) {
+	inv := &rehearsalInventory{}
+
+	coreVer, err := wpcliWithRetry(env, "core version", 8, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("core version inventory failed: %w", err)
+	}
+	inv.CoreVersion = strings.TrimSpace(coreVer)
+
+	pluginsOut, err := wpcliWithRetry(env, "plugin list --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
+	if err == nil {
+		if data := extractJSONArray(pluginsOut); data != "" {
+			_ = json.Unmarshal([]byte(data), &inv.Plugins)
+		}
+	} else {
+		log.Printf("rehearsal inventory: plugin list failed: %v", err)
+	}
+
+	themesOut, err := wpcliWithRetry(env, "theme list --format=json --fields=name,status,version,update,update_version,auto_update", 4, 1500*time.Millisecond)
+	if err == nil {
+		if data := extractJSONArray(themesOut); data != "" {
+			_ = json.Unmarshal([]byte(data), &inv.Themes)
+		}
+	} else {
+		log.Printf("rehearsal inventory: theme list failed: %v", err)
+	}
+
+	return inv, nil
+}
+
+func waitForRehearsalWPCLIReady(env *staging.StagingEnv) error {
+	if _, err := wpcliWithRetry(env, "core is-installed", 12, 2*time.Second); err != nil {
+		return fmt.Errorf("wp-cli readiness check failed (core is-installed): %w", err)
+	}
+	if _, err := wpcliWithRetry(env, "core version", 6, 1500*time.Millisecond); err != nil {
+		return fmt.Errorf("wp-cli readiness check failed (core version): %w", err)
+	}
+	return nil
+}
+
+func wpcliWithRetry(env *staging.StagingEnv, args string, attempts int, delay time.Duration) (string, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		out, err := env.WPCLI(args)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		if i < attempts-1 {
+			time.Sleep(delay)
+		}
+	}
+	return "", fmt.Errorf("wp-cli command '%s' failed after %d attempt(s): %w", args, attempts, lastErr)
+}
+
+func extractJSONArray(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	start := strings.Index(s, "[")
+	end := strings.LastIndex(s, "]")
+	if start == -1 || end == -1 || end < start {
+		return ""
+	}
+	return strings.TrimSpace(s[start : end+1])
+}
+
+func runRehearsalUpgradeStage(env *staging.StagingEnv) []rehearsalUpgradeStep {
+	steps := []struct {
+		name      string
+		command   string
+		allowFail bool
+	}{
+		{name: "core update", command: "core update", allowFail: false},
+		{name: "plugin update", command: "plugin update --all", allowFail: true},
+		{name: "theme update", command: "theme update --all", allowFail: true},
+		{name: "language core update", command: "language core update", allowFail: true},
+		{name: "language plugin update", command: "language plugin update --all", allowFail: true},
+		{name: "language theme update", command: "language theme update --all", allowFail: true},
+		{name: "database update", command: "core update-db", allowFail: true},
+	}
+
+	results := make([]rehearsalUpgradeStep, 0, len(steps))
+	for _, step := range steps {
+		out, err := env.WPCLI(step.command)
+		success := err == nil || step.allowFail
+		if err != nil {
+			out = err.Error()
+		}
+		results = append(results, rehearsalUpgradeStep{
+			Name:    step.name,
+			Command: step.command,
+			Output:  strings.TrimSpace(out),
+			Success: success,
+		})
+		if err != nil && !step.allowFail {
+			break
+		}
+	}
+
+	return results
+}
+
+func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snapshotID string, rc *restic.ResticClient, publicHost string) (*staging.StagingEnv, []rehearsalUpgradeStep, error) {
+	steps := []rehearsalUpgradeStep{}
+
+	if err := m.Destroy(env); err != nil {
+		steps = append(steps, rehearsalUpgradeStep{
+			Name:    "destroy upgraded staging environment",
+			Command: "staging destroy",
+			Output:  err.Error(),
+			Success: false,
+		})
+		return nil, steps, fmt.Errorf("failed to destroy upgraded rehearsal environment: %w", err)
+	}
+	steps = append(steps, rehearsalUpgradeStep{
+		Name:    "destroy upgraded staging environment",
+		Command: "staging destroy",
+		Output:  "ok",
+		Success: true,
+	})
+
+	rolledBackEnv, err := m.CreateWithPublicHost(snapshotID, rc, publicHost)
+	if err != nil {
+		steps = append(steps, rehearsalUpgradeStep{
+			Name:    "restore snapshot into fresh staging environment",
+			Command: "staging create from snapshot",
+			Output:  err.Error(),
+			Success: false,
+		})
+		return nil, steps, fmt.Errorf("failed to recreate rehearsal environment from snapshot: %w", err)
+	}
+	steps = append(steps, rehearsalUpgradeStep{
+		Name:    "restore snapshot into fresh staging environment",
+		Command: "staging create from snapshot",
+		Output:  "ok",
+		Success: true,
+	})
+
+	return rolledBackEnv, steps, nil
 }
 
 func (s *APIServer) startWorker() {
@@ -96,11 +283,16 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		if errMsg == "" {
 			return "unknown error"
 		}
-		if idx := strings.Index(errMsg, "\n"); idx >= 0 {
-			errMsg = errMsg[:idx]
+		parts := strings.Split(errMsg, "\n")
+		if len(parts) > 1 {
+			max := 3
+			if len(parts) < max {
+				max = len(parts)
+			}
+			errMsg = strings.Join(parts[:max], " | ")
 		}
-		if len(errMsg) > 320 {
-			errMsg = errMsg[:320] + "..."
+		if len(errMsg) > 700 {
+			errMsg = errMsg[:700] + "..."
 		}
 		return errMsg
 	}
@@ -113,6 +305,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 	}
 	setError := func(errMsg string) {
 		job.Status = "failed"
+		log.Printf("job %s (%s) failed: %s", job.ID, job.Type, strings.TrimSpace(errMsg))
 		errMsg = condenseError(errMsg)
 		job.Error = errMsg
 		s.Database.UpdateJobStatus(job.ID, "failed", job.Progress, job.ProgressPercent, "", errMsg)
@@ -579,21 +772,73 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "Restoring snapshot to staging...", 30)
-		env, err := s.StagingManager.Create(snapshotID, resticClient)
+		env, err := s.StagingManager.CreateWithPublicHost(snapshotID, resticClient, tuple.req.PublicHost)
 		if err != nil {
 			setError("failed to create staging environment: " + err.Error())
 			return
 		}
 
-		setStatus("running", "Staging environment ready", 90)
+		setStatus("running", "Waiting for WP-CLI readiness...", 40)
+		if err := waitForRehearsalWPCLIReady(env); err != nil {
+			setError("rehearsal environment is not ready for wp-cli: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Collecting inventory (before upgrade)...", 45)
+		inventoryBefore, err := collectRehearsalInventory(env)
+		if err != nil {
+			setError("failed to collect rehearsal inventory: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Running upgrade stage on rehearsal environment...", 65)
+		upgradeSteps := runRehearsalUpgradeStage(env)
+		if len(upgradeSteps) > 0 && !upgradeSteps[len(upgradeSteps)-1].Success {
+			setError("rehearsal upgrade stage failed: " + upgradeSteps[len(upgradeSteps)-1].Output)
+			return
+		}
+
+		setStatus("running", "Collecting inventory (after upgrade)...", 80)
+		inventoryAfter, err := collectRehearsalInventory(env)
+		if err != nil {
+			setError("failed to collect upgraded rehearsal inventory: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Running rollback stage on rehearsal environment...", 88)
+		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost)
+		if err != nil {
+			setError("rehearsal rollback stage failed: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Waiting for WP-CLI readiness after rollback...", 90)
+		if err := waitForRehearsalWPCLIReady(rolledBackEnv); err != nil {
+			setError("rolled back rehearsal environment is not ready for wp-cli: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Collecting inventory (after rollback)...", 92)
+		inventoryRollback, err := collectRehearsalInventory(rolledBackEnv)
+		if err != nil {
+			setError("failed to collect rollback rehearsal inventory: " + err.Error())
+			return
+		}
+
+		setStatus("running", "Staging environment ready", 96)
 		resultJSON, _ := json.Marshal(map[string]interface{}{
-			"health_url":   env.HealthURL,
-			"compose_file": env.ComposeFile,
-			"project_name": env.ProjectName,
-			"restore_dir":  env.RestoreDir,
-			"wp_version":   env.WPVersion,
-			"db_name":      env.DBName,
-			"snapshot_id":  snapshotID,
+			"health_url":         rolledBackEnv.HealthURL,
+			"compose_file":       rolledBackEnv.ComposeFile,
+			"project_name":       rolledBackEnv.ProjectName,
+			"restore_dir":        rolledBackEnv.RestoreDir,
+			"wp_version":         rolledBackEnv.WPVersion,
+			"db_name":            rolledBackEnv.DBName,
+			"snapshot_id":        snapshotID,
+			"upgrade_steps":      upgradeSteps,
+			"rollback_steps":     rollbackSteps,
+			"inventory_before":   inventoryBefore,
+			"inventory_after":    inventoryAfter,
+			"inventory_rollback": inventoryRollback,
 		})
 		setResult(string(resultJSON))
 

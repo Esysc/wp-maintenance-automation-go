@@ -956,6 +956,8 @@ func (s *APIServer) handleRehearsal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.PublicHost = forwardedPublicHost(r)
+
 	job, err := s.enqueueJob("rehearsal", req)
 	if err != nil {
 		apiErr(w, http.StatusServiceUnavailable, "failed to enqueue rehearsal job: "+err.Error())
@@ -988,17 +990,44 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 	}
 
 	if job == nil || job.Result == "" {
-		jsonResp(w, http.StatusOK, map[string]interface{}{
-			"job_id": "",
-			"status": "",
-			"active": false,
-			"env":    nil,
-		})
-		return
+		if job == nil {
+			jsonResp(w, http.StatusOK, map[string]interface{}{
+				"job_id": "",
+				"status": "",
+				"active": false,
+				"env":    nil,
+			})
+			return
+		}
+
+		if job.Status == "failed" || job.Status == "cancelled" {
+			jobs, listErr := s.Database.ListJobsBySiteWithType(siteID, "rehearsal")
+			if listErr == nil {
+				for _, prev := range jobs {
+					if prev == nil || prev.ID == job.ID {
+						continue
+					}
+					if prev.Status == "completed" && strings.TrimSpace(prev.Result) != "" {
+						job = prev
+						break
+					}
+				}
+			}
+		}
+
+		if strings.TrimSpace(job.Result) == "" {
+			jsonResp(w, http.StatusOK, map[string]interface{}{
+				"job_id": job.ID,
+				"status": job.Status,
+				"active": false,
+				"env":    nil,
+			})
+			return
+		}
 	}
 
 	status := job.Status
-	if status != "completed" {
+	if status != "completed" && status != "failed" && status != "cancelled" {
 		jsonResp(w, http.StatusOK, map[string]interface{}{
 			"job_id": job.ID,
 			"status": status,
@@ -1008,19 +1037,15 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	var envData struct {
-		HealthURL   string `json:"health_url"`
-		ComposeFile string `json:"compose_file"`
-		ProjectName string `json:"project_name"`
-		WPVersion   string `json:"wp_version"`
-		DBName      string `json:"db_name"`
-		SnapshotID  string `json:"snapshot_id"`
-	}
+	envData := map[string]interface{}{}
 
 	active := false
 	if err := json.Unmarshal([]byte(job.Result), &envData); err == nil {
-		if envData.ComposeFile != "" && envData.ProjectName != "" && s.StagingManager != nil {
-			env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, "", envData.HealthURL)
+		composeFile, _ := envData["compose_file"].(string)
+		projectName, _ := envData["project_name"].(string)
+		healthURL, _ := envData["health_url"].(string)
+		if composeFile != "" && projectName != "" && s.StagingManager != nil {
+			env := staging.NewEnv(composeFile, projectName, "", healthURL)
 			active = env.IsRunning()
 		}
 	}
@@ -1030,7 +1055,7 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 			"job_id": job.ID,
 			"status": status,
 			"active": false,
-			"env":    nil,
+			"env":    envData,
 		})
 		return
 	}
@@ -1087,27 +1112,44 @@ func (s *APIServer) handleRehearsalStop(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	if job.Status == "cancelled" || job.Status == "failed" {
-		jsonResp(w, http.StatusOK, map[string]interface{}{"message": "rehearsal already stopped"})
-		return
-	}
-
-	if job.Result != "" {
+	cleanupEnvFromResult := func(raw string) {
+		if strings.TrimSpace(raw) == "" || s.StagingManager == nil {
+			return
+		}
 		var envData struct {
 			ComposeFile string `json:"compose_file"`
 			ProjectName string `json:"project_name"`
 			RestoreDir  string `json:"restore_dir"`
 			HealthURL   string `json:"health_url"`
 		}
-		if err := json.Unmarshal([]byte(job.Result), &envData); err == nil && envData.ComposeFile != "" {
-			env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, envData.RestoreDir, envData.HealthURL)
-			if s.StagingManager != nil {
-				s.StagingManager.Destroy(env)
+		if err := json.Unmarshal([]byte(raw), &envData); err != nil || strings.TrimSpace(envData.ComposeFile) == "" {
+			return
+		}
+		env := staging.NewEnv(envData.ComposeFile, envData.ProjectName, envData.RestoreDir, envData.HealthURL)
+		if err := s.StagingManager.Destroy(env); err != nil {
+			log.Printf("rehearsal stop: cleanup failed for compose=%s project=%s: %v", envData.ComposeFile, envData.ProjectName, err)
+		}
+	}
+
+	// Defensive cleanup: teardown env from selected job and any historical
+	// rehearsal jobs for the same site that still reference running containers.
+	cleanupEnvFromResult(job.Result)
+	history, listErr := s.Database.ListJobsBySiteWithType(job.SiteID, "rehearsal")
+	if listErr == nil {
+		for _, j := range history {
+			if j == nil || j.ID == job.ID {
+				continue
+			}
+			cleanupEnvFromResult(j.Result)
+			if j.Status != "cancelled" {
+				_ = s.Database.CancelJob(j.ID)
 			}
 		}
 	}
 
-	s.Database.CancelJob(jobID)
+	if job.Status != "cancelled" {
+		s.Database.CancelJob(jobID)
+	}
 	jsonResp(w, http.StatusOK, map[string]interface{}{"message": "rehearsal stopped"})
 }
 

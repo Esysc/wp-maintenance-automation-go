@@ -34,6 +34,7 @@ type StagingEnv struct {
 	DBPassword   string
 	TablePrefix  string
 	HealthURL    string
+	PublicHost   string
 	BuildContext string
 }
 
@@ -51,6 +52,10 @@ func NewEnv(composeFile, projectName, restoreDir, healthURL string) *StagingEnv 
 }
 
 func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEnv, error) {
+	return m.CreateWithPublicHost(snapshotID, rc, "")
+}
+
+func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClient, publicHost string) (*StagingEnv, error) {
 	restoreDir, err := os.MkdirTemp("", "wpmaintenance-staging-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create staging restore dir: %w", err)
@@ -60,6 +65,7 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 		SnapshotID:   snapshotID,
 		RestoreDir:   restoreDir,
 		ProjectName:  "wps-" + snapshotID[:8],
+		PublicHost:   strings.TrimSpace(publicHost),
 		BuildContext: m.buildContext,
 	}
 
@@ -142,7 +148,11 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 		return nil, fmt.Errorf("site URL update failed: %w", err)
 	}
 
-	env.HealthURL = fmt.Sprintf("https://localhost:%s", env.HTTPSPort)
+	host := env.PublicHost
+	if host == "" {
+		host = "localhost"
+	}
+	env.HealthURL = fmt.Sprintf("https://%s:%s", host, env.HTTPSPort)
 
 	return env, nil
 }
@@ -186,13 +196,32 @@ func (env *StagingEnv) IsRunning() bool {
 	if env == nil || env.ProjectName == "" {
 		return false
 	}
-	cmd := exec.Command("docker", "ps",
+	// Prefer compose-native status detection because docker label filtering can
+	// be unreliable when compose project naming is overridden.
+	cmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"ps", "--status", "running", "--services",
+	)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		services := strings.Fields(strings.TrimSpace(string(output)))
+		for _, svc := range services {
+			if svc == "wp" || svc == "db" {
+				return true
+			}
+		}
+	}
+
+	// Fallback for older docker/compose combinations.
+	cmd = exec.Command("docker", "ps",
 		"--filter", "label=com.docker.compose.project="+env.ProjectName,
 		"--filter", "status=running",
 		"--format", "{{.ID}}",
 	)
 	cmd.Env = os.Environ()
-	output, err := cmd.CombinedOutput()
+	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
@@ -431,7 +460,11 @@ func (env *StagingEnv) updateSiteURL() error {
 	oldURL, _ := env.getSiteURL()
 	log.Printf("staging: getSiteURL returned '%s' (db=%s, prefix=%s)", oldURL, env.DBName, prefixSQL)
 
-	newURL := fmt.Sprintf("https://localhost:%s", env.HTTPSPort)
+	host := env.PublicHost
+	if host == "" {
+		host = "localhost"
+	}
+	newURL := fmt.Sprintf("https://%s:%s", host, env.HTTPSPort)
 	log.Printf("staging: newURL='%s'", newURL)
 
 	updateSQL := fmt.Sprintf(

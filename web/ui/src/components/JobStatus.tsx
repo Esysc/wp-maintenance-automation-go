@@ -18,22 +18,27 @@ export interface Job {
 interface Props {
   jobType?: string
   siteId: string
+  refreshToken?: number
   onReady?: (jobId: string) => void
   onActiveChange?: (active: boolean) => void
   onFinished?: (job: Job) => void
 }
 
-export default function JobStatus({ jobType, siteId, onReady, onActiveChange, onFinished }: Props) {
+export default function JobStatus({ jobType, siteId, refreshToken, onReady, onActiveChange, onFinished }: Props) {
   const [job, setJob] = useState<Job | null>(null)
   const [cancelling, setCancelling] = useState(false)
   const intervalRef = useRef<number | undefined>(undefined)
   const { t } = useLanguage()
 
   useEffect(() => {
-    if (!siteId) { setJob(null); return }
+    if (!siteId) {
+      setJob(null)
+      onActiveChange?.(false)
+      return
+    }
     loadLatest()
     return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
-  }, [siteId, jobType])
+  }, [siteId, jobType, refreshToken])
 
   async function loadLatest() {
     let url = `/api/v1/jobs?site_id=${siteId}`
@@ -47,6 +52,7 @@ export default function JobStatus({ jobType, siteId, onReady, onActiveChange, on
         poll(j.id)
       } else {
         setJob(null)
+        onActiveChange?.(false)
       }
     }
   }

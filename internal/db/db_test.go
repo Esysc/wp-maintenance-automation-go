@@ -250,6 +250,70 @@ func TestSiteSensitiveFieldsEncryptedAtRest(t *testing.T) {
 	}
 }
 
+func TestDeleteSiteRemovesRelatedRows(t *testing.T) {
+	db := setupTestDB(t)
+
+	site := &Site{
+		ID:         "site-delete-1",
+		Name:       "Delete Me",
+		WPSSHHost:  "example.com",
+		WPSSHUser:  "ubuntu",
+		WPRoot:     "/var/www/html",
+		DBHost:     "localhost",
+		DBUser:     "wpuser",
+		DBPassword: "secret",
+		DBName:     "wordpress",
+	}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("failed to create site: %v", err)
+	}
+
+	backup := &Backup{
+		ID:        "backup-1",
+		SiteID:    site.ID,
+		Timestamp: "2026-08-16T10:00:00Z",
+		Host:      "example.com",
+		WPRoot:    "/var/www/html",
+	}
+	if err := db.CreateBackup(backup); err != nil {
+		t.Fatalf("failed to create backup: %v", err)
+	}
+
+	job := &Job{
+		ID:              "job-1",
+		Type:            "backup",
+		SiteID:          site.ID,
+		Status:          "queued",
+		Progress:        "",
+		ProgressPercent: 0,
+		Result:          "",
+		Error:           "",
+	}
+	if err := db.CreateJob(job); err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	if err := db.DeleteSite(site.ID); err != nil {
+		t.Fatalf("failed to delete site: %v", err)
+	}
+
+	if _, err := db.GetSite(site.ID); err == nil {
+		t.Fatal("expected deleted site to be missing")
+	}
+
+	backups, err := db.GetBackupsBySite(site.ID)
+	if err != nil {
+		t.Fatalf("failed to query backups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected related backups to be removed, got %d", len(backups))
+	}
+
+	if _, err := db.GetJob(job.ID); err == nil {
+		t.Fatal("expected related job to be removed")
+	}
+}
+
 func TestSiteSensitiveFieldsPlaintextBackwardCompatibility(t *testing.T) {
 	t.Setenv("DATA_ENCRYPTION_KEY", "test-encryption-key")
 	db := setupTestDB(t)

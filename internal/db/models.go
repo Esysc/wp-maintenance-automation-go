@@ -152,8 +152,45 @@ func (db *Database) UpdateSite(site *Site) error {
 }
 
 func (db *Database) DeleteSite(id string) error {
-	_, err := db.Exec("DELETE FROM sites WHERE id=?", id)
-	return err
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	rollback := func() error {
+		if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+			return rbErr
+		}
+		return nil
+	}
+
+	exec := func(query string, args ...interface{}) error {
+		if db.driver == "postgres" {
+			query = pgPlaceholders(query)
+		}
+		if _, err := tx.Exec(query, args...); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	for _, query := range []string{
+		"DELETE FROM jobs WHERE site_id=?",
+		"DELETE FROM backups WHERE site_id=?",
+		"DELETE FROM sites WHERE id=?",
+	} {
+		if err := exec(query, id); err != nil {
+			if rbErr := rollback(); rbErr != nil {
+				return rbErr
+			}
+			return err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (db *Database) CreateBackup(backup *Backup) error {

@@ -44,6 +44,7 @@ WP Maintenance Automation Go is a Go-based implementation of WordPress maintenan
 - Dashboard with status overview and quick actions
 - Site management (SSH, DB, restic config, config auto-detect)
 - Backups, restore, upgrades, and staging rehearsal pages
+- Sandbox disaster-recovery page with live start logs, drill, restore, and delete
 - System page (`/system`) with live host and container metrics
 - Multi-language support (9 languages)
 
@@ -166,22 +167,27 @@ make dev
 ```
 
 2. Open the web UI and go to the Sandbox page.
-3. Click "Start sandbox". This spins up a Docker WordPress + MariaDB environment and registers it as a normal site.
+3. Click "Start sandbox". This spins up a Docker WordPress + MariaDB environment and registers it as a normal site. Startup progress is streamed live into the UI, and once running the site can be opened directly in the browser (via the site URL or the "Open in popup" button, served through `/sandbox-site`).
 4. Click "Take backup" to create a real restic snapshot of the site files and database.
-5. Confirm the drill and click "Break the site now" to simulate a destructive failure.
+5. Confirm the drill and click "Break the site now" to simulate a destructive failure. The drill is only enabled once at least one backup exists.
 6. Select the latest snapshot and click "Restore site" to restore both files and the database.
 7. Verify the sandbox is healthy again and then stop it when finished.
+8. To start over from scratch, the Sandbox page also offers a "Delete test site" option that stops the containers, removes the site record with all of its backups, and wipes the sandbox data.
 
 This exercises the same SSH + restic + database restore path used in production, but against a local disposable site.
 
 The sandbox also exposes a simple API flow:
 
 ```bash
-POST /api/v1/sandbox/start
-POST /api/v1/backup
-POST /api/v1/sandbox/break
-POST /api/v1/restore
-POST /api/v1/sandbox/stop
+POST   /api/v1/sandbox/start
+GET    /api/v1/sandbox/start/logs   # SSE stream of startup logs
+GET    /api/v1/sandbox
+POST   /api/v1/backup
+POST   /api/v1/sandbox/break
+POST   /api/v1/restore
+POST   /api/v1/sandbox/stop
+DELETE /api/v1/sandbox
+GET    /sandbox-site/*              # the running sandbox site, proxied through the app
 ```
 
 The production-like drill is intended for validation and recovery testing, not as a replacement for real environment checks.

@@ -485,6 +485,90 @@ func TestHandleSitesList(t *testing.T) {
 	}
 }
 
+func TestHandleSiteDeleteRemovesRelatedRows(t *testing.T) {
+	s := setupTestAPIServer(t)
+	adminToken := loginTestAdmin(t, s)
+
+	siteReqBody := map[string]interface{}{
+		"name":            "Delete Me",
+		"wp_ssh_host":     "example.com",
+		"wp_ssh_port":     22,
+		"wp_ssh_user":     "ubuntu",
+		"wp_root":         "/var/www/html",
+		"backup_dir":      "./backups",
+		"retention_flags": "--keep-daily 7",
+	}
+	siteBodyBytes, _ := json.Marshal(siteReqBody)
+
+	siteReq := httptest.NewRequest("POST", "/api/v1/sites", bytes.NewBuffer(siteBodyBytes))
+	siteReq.Header.Set("Content-Type", "application/json")
+	siteReq.Header.Set("Authorization", "Bearer "+adminToken)
+
+	siteRR := httptest.NewRecorder()
+	s.handleSites(siteRR, siteReq)
+	if siteRR.Code != http.StatusCreated {
+		t.Fatalf("Expected status 201, got %d. Body: %s", siteRR.Code, siteRR.Body.String())
+	}
+
+	var siteResult map[string]interface{}
+	json.Unmarshal(siteRR.Body.Bytes(), &siteResult)
+	siteID := siteResult["data"].(map[string]interface{})["id"].(string)
+
+	if err := s.Database.CreateBackup(&db.Backup{
+		ID:        "backup-delete-1",
+		SiteID:    siteID,
+		Timestamp: "2026-08-16T10:00:00Z",
+		Host:      "example.com",
+		WPRoot:    "/var/www/html",
+	}); err != nil {
+		t.Fatalf("failed to create backup: %v", err)
+	}
+
+	if err := s.Database.CreateJob(&db.Job{
+		ID:              "job-delete-1",
+		Type:            "backup",
+		SiteID:          siteID,
+		Status:          "queued",
+		Progress:        "",
+		ProgressPercent: 0,
+		Result:          "",
+		Error:           "",
+	}); err != nil {
+		t.Fatalf("failed to create job: %v", err)
+	}
+
+	deleteReq := httptest.NewRequest("DELETE", "/api/v1/sites/"+siteID, nil)
+	deleteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	deleteRR := httptest.NewRecorder()
+	s.handleSiteByID(deleteRR, deleteReq)
+
+	if deleteRR.Code != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s", deleteRR.Code, deleteRR.Body.String())
+	}
+
+	var deleteResult map[string]interface{}
+	json.Unmarshal(deleteRR.Body.Bytes(), &deleteResult)
+	if deleteResult["success"] != true {
+		t.Fatalf("Expected success true, got %v", deleteResult["success"])
+	}
+
+	if _, err := s.Database.GetSite(siteID); err == nil {
+		t.Fatal("expected deleted site to be missing")
+	}
+
+	backups, err := s.Database.GetBackupsBySite(siteID)
+	if err != nil {
+		t.Fatalf("failed to query backups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected related backups to be removed, got %d", len(backups))
+	}
+
+	if _, err := s.Database.GetJob("job-delete-1"); err == nil {
+		t.Fatal("expected related job to be removed")
+	}
+}
+
 func TestHandleUsersReturnsInternalProfile(t *testing.T) {
 	s := setupTestAPIServer(t)
 	adminToken := loginTestAdmin(t, s)

@@ -284,6 +284,7 @@
   "rehearsal_security_none": "未发现问题。",
   "rehearsal_security_summary": "发现项",
   "rehearsal_security_recommendation": "建议",
+  "rehearsal_security_action": "修复方法",
   "rehearsal_security_reference": "公告",
   "severity_critical": "严重",
   "severity_high": "高",

@@ -289,7 +289,7 @@ It also enriches the report with known vulnerabilities:
 - **Composer dependencies** bundled inside plugins/themes via the [OSV API](https://osv.dev).
 - **PHP end-of-life status** via [endoflife.date](https://endoflife.date/php).
 
-Results are cached for 24 hours in the `cve_cache` database table to avoid exhausting provider quotas. Findings include severity, evidence, and a recommendation. They are reported as warnings and do not fail the rehearsal.
+Results are cached for 24 hours in the `cve_cache` database table to avoid exhausting provider quotas. Findings include severity, evidence, a recommendation, and a concrete **How to fix** section with commands, headers, and configuration examples. They are reported as warnings and do not fail the rehearsal.
 
 This is a configuration and known-vulnerability review, not an exploit-based penetration test. Only scan systems you own or are authorized to test. For a full engagement, define the scope with a professional tester.
 

@@ -285,6 +285,7 @@
   "rehearsal_security_none": "Nessun problema rilevato.",
   "rehearsal_security_summary": "Risultati",
   "rehearsal_security_recommendation": "Raccomandazione",
+  "rehearsal_security_action": "Come risolvere",
   "rehearsal_security_reference": "Avviso",
   "severity_critical": "critico",
   "severity_high": "alto",

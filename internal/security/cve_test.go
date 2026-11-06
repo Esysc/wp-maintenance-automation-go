@@ -67,6 +67,9 @@ func TestLookupWPScanFiltersByVersionAndCaches(t *testing.T) {
 	if !strings.Contains(byID["wpscan-plugin-1"].Recommendation, "1.2.0") {
 		t.Errorf("recommendation = %q", byID["wpscan-plugin-1"].Recommendation)
 	}
+	if !strings.Contains(byID["wpscan-plugin-1"].Action, "wp plugin update foo") {
+		t.Errorf("action = %q", byID["wpscan-plugin-1"].Action)
+	}
 	if byID["wpscan-core-1"].Severity != SeverityMedium {
 		t.Errorf("core severity = %q, want medium", byID["wpscan-core-1"].Severity)
 	}
@@ -193,6 +196,9 @@ func TestLookupOSVFindsComposerVulnerability(t *testing.T) {
 	}
 	if !strings.Contains(findings[0].Recommendation, "2.0.0") {
 		t.Errorf("recommendation = %q", findings[0].Recommendation)
+	}
+	if !strings.Contains(findings[0].Action, "composer update vendor/pkg") {
+		t.Errorf("action = %q", findings[0].Action)
 	}
 	if findings[0].Reference != "https://osv.dev/OSV-2026-1" {
 		t.Errorf("reference = %q", findings[0].Reference)

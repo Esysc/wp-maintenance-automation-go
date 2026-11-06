@@ -349,12 +349,28 @@ func wpscanFindings(component Component, vulnerabilities []wpscanVulnerability) 
 			}
 		}
 
+		action := "Run the update in staging first, then production:\n"
+		switch component.Type {
+		case "core":
+			action += "  wp core update"
+		case "plugin":
+			action += "  wp plugin update " + component.Slug
+		case "theme":
+			action += "  wp theme update " + component.Slug
+		}
+		if fixed != "" {
+			action += "\nTarget: " + fixed + " or later."
+		} else {
+			action += "\nNo fixed version is published; remove or replace the component."
+		}
+
 		findings = append(findings, Finding{
 			ID:             "wpscan-" + id,
 			Severity:       severity,
 			Title:          component.Name + ": " + strings.TrimSpace(vulnerability.Title),
 			Description:    fmt.Sprintf("A known vulnerability affects %s %s.", component.Name, component.Version),
 			Recommendation: recommendation,
+			Action:         action,
 			Evidence:       strings.Join(evidenceParts, "; "),
 			Reference:      reference,
 		})
@@ -741,12 +757,19 @@ func osvFindings(pkg Component, vulnerabilities []osvVulnerability) []Finding {
 			reference = vulnerability.References[0].URL
 		}
 
+		action := fmt.Sprintf("Update the dependency:\n  composer update %s", pkg.Name)
+		if fixed != "" {
+			action += "\nTarget: " + fixed + " or later."
+		}
+		action += "\nIf it is bundled inside a plugin or theme, update that parent component and redeploy."
+
 		findings = append(findings, Finding{
 			ID:             "osv-" + vulnerability.ID,
 			Severity:       severity,
 			Title:          "Vulnerable Composer dependency: " + pkg.Name,
 			Description:    description,
 			Recommendation: recommendation,
+			Action:         action,
 			Evidence:       strings.Join(evidence, "; "),
 			Reference:      reference,
 		})

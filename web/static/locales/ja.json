@@ -284,6 +284,7 @@
   "rehearsal_security_none": "問題は見つかりませんでした。",
   "rehearsal_security_summary": "検出項目",
   "rehearsal_security_recommendation": "推奨事項",
+  "rehearsal_security_action": "修正方法",
   "rehearsal_security_reference": "アドバイザリ",
   "severity_critical": "重大",
   "severity_high": "高",

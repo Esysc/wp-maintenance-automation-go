@@ -284,6 +284,7 @@
   "rehearsal_security_none": "Aucun problème détecté.",
   "rehearsal_security_summary": "Constats",
   "rehearsal_security_recommendation": "Recommandation",
+  "rehearsal_security_action": "Comment corriger",
   "rehearsal_security_reference": "Avis",
   "severity_critical": "critique",
   "severity_high": "élevé",

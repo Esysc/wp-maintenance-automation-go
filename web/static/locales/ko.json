@@ -284,6 +284,7 @@
   "rehearsal_security_none": "발견된 문제가 없습니다.",
   "rehearsal_security_summary": "발견 항목",
   "rehearsal_security_recommendation": "권장 사항",
+  "rehearsal_security_action": "해결 방법",
   "rehearsal_security_reference": "보안 권고",
   "severity_critical": "심각",
   "severity_high": "높음",

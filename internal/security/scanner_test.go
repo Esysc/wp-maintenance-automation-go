@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -94,8 +95,10 @@ func TestScanFindsCommonWordPressIssues(t *testing.T) {
 		"rest-api":          SeverityInfo,
 	}
 	found := map[string]Severity{}
+	findingsByID := map[string]Finding{}
 	for _, finding := range report.Findings {
 		found[finding.ID] = finding.Severity
+		findingsByID[finding.ID] = finding
 	}
 	for id, severity := range want {
 		if got, ok := found[id]; !ok {
@@ -106,6 +109,9 @@ func TestScanFindsCommonWordPressIssues(t *testing.T) {
 	}
 	if report.Counts[string(SeverityCritical)] != 2 {
 		t.Errorf("critical count = %d, want 2", report.Counts[string(SeverityCritical)])
+	}
+	if !strings.Contains(findingsByID["installer"].Action, "install.php") {
+		t.Errorf("installer action = %q", findingsByID["installer"].Action)
 	}
 	if report.Summary() == "" {
 		t.Fatal("Summary() is empty")

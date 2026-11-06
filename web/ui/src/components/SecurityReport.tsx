@@ -6,6 +6,7 @@ export interface SecurityFinding {
   title: string
   description: string
   recommendation: string
+  action?: string
   evidence?: string
   url?: string
   reference?: string
@@ -46,6 +47,12 @@ export default function SecurityReportCard({ report, note }: { report?: Security
             </summary>
             <p style={{ marginTop: 8 }}>{finding.description}</p>
             <p><strong>{t('rehearsal_security_recommendation')}:</strong> {finding.recommendation}</p>
+            {finding.action && (
+              <div style={{ marginTop: 8 }}>
+                <strong>{t('rehearsal_security_action')}:</strong>
+                <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12, marginTop: 4 }}>{finding.action}</pre>
+              </div>
+            )}
             {finding.reference && (
               <p><a href={finding.reference} target="_blank" rel="noopener">{t('rehearsal_security_reference')}</a></p>
             )}

@@ -275,6 +275,25 @@ func (db *Database) DeleteBackupsBySnapshotID(snapshotID string) error {
 	return err
 }
 
+func (db *Database) GetCVECache(key string) ([]byte, time.Time, error) {
+	var payload string
+	var fetchedAt time.Time
+	err := db.QueryRow("SELECT payload, fetched_at FROM cve_cache WHERE cache_key = ?", key).Scan(&payload, &fetchedAt)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return []byte(payload), fetchedAt, nil
+}
+
+func (db *Database) SetCVECache(key string, payload []byte) error {
+	_, err := db.Exec(
+		`INSERT INTO cve_cache (cache_key, payload, fetched_at) VALUES (?, ?, ?)
+		 ON CONFLICT (cache_key) DO UPDATE SET payload=excluded.payload, fetched_at=excluded.fetched_at`,
+		key, string(payload), time.Now().UTC(),
+	)
+	return err
+}
+
 func (db *Database) CountSnapshots() (int, error) {
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM backups WHERE snapshot_id != ''").Scan(&count)

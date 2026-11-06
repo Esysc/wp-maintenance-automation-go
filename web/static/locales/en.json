@@ -227,6 +227,7 @@
   "rehearsal_security_none": "No findings.",
   "rehearsal_security_summary": "Findings",
   "rehearsal_security_recommendation": "Recommendation",
+  "rehearsal_security_reference": "Advisory",
   "severity_critical": "critical",
   "severity_high": "high",
   "severity_medium": "medium",

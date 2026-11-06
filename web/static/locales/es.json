@@ -284,6 +284,7 @@
   "rehearsal_security_none": "Sin hallazgos.",
   "rehearsal_security_summary": "Hallazgos",
   "rehearsal_security_recommendation": "Recomendación",
+  "rehearsal_security_reference": "Aviso",
   "severity_critical": "crítico",
   "severity_high": "alto",
   "severity_medium": "medio",

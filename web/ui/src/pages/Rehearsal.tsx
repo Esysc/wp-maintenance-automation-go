@@ -52,6 +52,7 @@ interface SecurityFinding {
   recommendation: string
   evidence?: string
   url?: string
+  reference?: string
 }
 
 interface SecurityReport {
@@ -180,6 +181,9 @@ export default function Rehearsal() {
               </summary>
               <p style={{ marginTop: 8 }}>{finding.description}</p>
               <p><strong>{t('rehearsal_security_recommendation')}:</strong> {finding.recommendation}</p>
+              {finding.reference && (
+                <p><a href={finding.reference} target="_blank" rel="noopener">{t('rehearsal_security_reference')}</a></p>
+              )}
               {finding.evidence && <pre style={{ whiteSpace: 'pre-wrap', fontSize: 12 }}>{finding.evidence}</pre>}
             </details>
           )

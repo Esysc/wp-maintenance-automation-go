@@ -32,6 +32,7 @@ type Finding struct {
 	Recommendation string   `json:"recommendation"`
 	Evidence       string   `json:"evidence,omitempty"`
 	URL            string   `json:"url,omitempty"`
+	Reference      string   `json:"reference,omitempty"`
 }
 
 type Report struct {
@@ -95,9 +96,7 @@ func Scan(ctx context.Context, target string, opts Options) (*Report, error) {
 	sort.SliceStable(report.Findings, func(i, j int) bool {
 		return severityRank(report.Findings[i].Severity) < severityRank(report.Findings[j].Severity)
 	})
-	for _, finding := range report.Findings {
-		report.Counts[string(finding.Severity)]++
-	}
+	report.Recount()
 	return report, nil
 }
 
@@ -396,6 +395,23 @@ func (r *Report) add(id string, severity Severity, title, description, recommend
 		Description:    description,
 		Recommendation: recommendation,
 	})
+}
+
+// AddFindings appends findings and refreshes ordering and severity counts.
+func (r *Report) AddFindings(findings ...Finding) {
+	r.Findings = append(r.Findings, findings...)
+	r.Recount()
+}
+
+// Recount re-sorts findings by severity and recomputes the counts map.
+func (r *Report) Recount() {
+	sort.SliceStable(r.Findings, func(i, j int) bool {
+		return severityRank(r.Findings[i].Severity) < severityRank(r.Findings[j].Severity)
+	})
+	r.Counts = map[string]int{}
+	for _, finding := range r.Findings {
+		r.Counts[string(finding.Severity)]++
+	}
 }
 
 func (r *Report) Summary() string {

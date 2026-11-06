@@ -284,6 +284,7 @@
   "rehearsal_security_none": "Проблем не обнаружено.",
   "rehearsal_security_summary": "Результаты",
   "rehearsal_security_recommendation": "Рекомендация",
+  "rehearsal_security_reference": "Уведомление",
   "severity_critical": "критический",
   "severity_high": "высокий",
   "severity_medium": "средний",

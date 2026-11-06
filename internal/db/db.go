@@ -187,6 +187,12 @@ func initSchema(db *sql.DB) error {
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
 
+	CREATE TABLE IF NOT EXISTS cve_cache (
+		cache_key TEXT PRIMARY KEY,
+		payload TEXT NOT NULL,
+		fetched_at TIMESTAMP NOT NULL
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_jobs_site_id ON jobs(site_id);
 	CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 	`

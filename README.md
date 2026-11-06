@@ -277,6 +277,28 @@ When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an e
 
 Docker socket access (`/var/run/docker.sock`) must be mounted into the API container for staging to work. This is configured in `docker-compose.yml` by default.
 
+## Security Review
+
+Each rehearsal runs a non-invasive security review against the upgraded staging site. It checks common WordPress misconfigurations such as missing security headers, exposed backup/debug files, directory listings, XML-RPC, user enumeration, weak TLS versions, cookie flags, and HTTP TRACE.
+
+It also enriches the report with known vulnerabilities:
+
+- **WordPress core, plugins, and themes** via the [WPScan API](https://wpscan.com/api). Set `WPSCAN_API_TOKEN` to enable this. Free WPScan plans have a daily request quota; `WPSCAN_MAX_REQUESTS` caps lookups per rehearsal.
+- **Composer dependencies** bundled inside plugins/themes via the [OSV API](https://osv.dev).
+- **PHP end-of-life status** via [endoflife.date](https://endoflife.date/php).
+
+Results are cached for 24 hours in the `cve_cache` database table to avoid exhausting provider quotas. Findings include severity, evidence, and a recommendation. They are reported as warnings and do not fail the rehearsal.
+
+This is a configuration and known-vulnerability review, not an exploit-based penetration test. Only scan systems you own or are authorized to test. For a full engagement, define the scope with a professional tester.
+
+```bash
+# Enable WordPress CVE lookups
+WPSCAN_API_TOKEN=your-wpscan-token
+
+# Optional: raise the per-rehearsal request budget on paid plans
+WPSCAN_MAX_REQUESTS=50
+```
+
 ## Host Metrics
 
 The System page (`/system`) shows real host metrics (CPU, memory, disk) and per-container stats. The API gathers host info from two sources:

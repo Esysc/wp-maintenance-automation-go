@@ -494,6 +494,45 @@ func (env *StagingEnv) disableStagingCaches() error {
 	return nil
 }
 
+// ComposerInstalledJSON returns the contents of Composer installed.json files
+// from the running staging container. The container may contain newer plugin
+// versions than the host restore directory after the upgrade has run.
+func (env *StagingEnv) ComposerInstalledJSON() ([]string, error) {
+	findCmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp",
+		"sh", "-c",
+		"find /var/www/html/wp-content -type f -path '*/vendor/composer/installed.json' -print",
+	)
+	findCmd.Env = os.Environ()
+	output, err := findCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("composer file discovery failed: %w", err)
+	}
+
+	contents := make([]string, 0)
+	for _, path := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		catCmd := exec.Command("docker", "compose",
+			"-f", env.ComposeFile,
+			"-p", env.ProjectName,
+			"exec", "-T", "wp",
+			"cat", path,
+		)
+		catCmd.Env = os.Environ()
+		data, err := catCmd.Output()
+		if err != nil {
+			continue
+		}
+		contents = append(contents, string(data))
+	}
+	return contents, nil
+}
+
 func (env *StagingEnv) patchWPConfig() error {
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,

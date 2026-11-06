@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -130,6 +131,64 @@ func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, er
 	}
 
 	return inv, nil
+}
+
+func rehearsalSecurityComponents(inv *rehearsalInventory, phpVersion string) []security.Component {
+	components := make([]security.Component, 0)
+	if inv == nil {
+		return components
+	}
+	if strings.TrimSpace(inv.CoreVersion) != "" {
+		components = append(components, security.Component{
+			Type:    "core",
+			Slug:    "wordpress",
+			Name:    "WordPress",
+			Version: strings.TrimSpace(inv.CoreVersion),
+			Active:  true,
+		})
+	}
+	for _, plugin := range inv.Plugins {
+		status := strings.ToLower(strings.TrimSpace(plugin.Status))
+		if status != "active" && status != "must-use" {
+			continue
+		}
+		if plugin.Name == "" || plugin.Version == "" {
+			continue
+		}
+		components = append(components, security.Component{
+			Type:    "plugin",
+			Slug:    plugin.Name,
+			Name:    plugin.Name,
+			Version: plugin.Version,
+			Active:  true,
+		})
+	}
+	for _, theme := range inv.Themes {
+		status := strings.ToLower(strings.TrimSpace(theme.Status))
+		if status != "active" && status != "parent" {
+			continue
+		}
+		if theme.Name == "" || theme.Version == "" {
+			continue
+		}
+		components = append(components, security.Component{
+			Type:    "theme",
+			Slug:    theme.Name,
+			Name:    theme.Name,
+			Version: theme.Version,
+			Active:  true,
+		})
+	}
+	if strings.TrimSpace(phpVersion) != "" {
+		components = append(components, security.Component{
+			Type:    "php",
+			Slug:    "php",
+			Name:    "PHP",
+			Version: phpVersion,
+			Active:  true,
+		})
+	}
+	return components
 }
 
 func waitForRehearsalWPCLIReady(env *staging.StagingEnv) error {
@@ -898,6 +957,40 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			setError("failed to collect upgraded rehearsal inventory: " + err.Error())
 			return
 		}
+
+		setStatus("running", "Checking known vulnerabilities...", 86)
+		maxRequests := 0
+		if raw := strings.TrimSpace(os.Getenv("WPSCAN_MAX_REQUESTS")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				maxRequests = parsed
+			}
+		}
+		cveCtx, cancelCVE := context.WithTimeout(context.Background(), 90*time.Second)
+		composerContents, composerErr := env.ComposerInstalledJSON()
+		if composerErr != nil {
+			log.Printf("rehearsal: composer dependency discovery failed: %v", composerErr)
+		}
+		cveFindings := security.LookupVulnerabilities(
+			cveCtx,
+			rehearsalSecurityComponents(inventoryAfter, env.PHPVersion),
+			composerContents,
+			security.VulnerabilityOptions{
+				WPScanToken: os.Getenv("WPSCAN_API_TOKEN"),
+				MaxRequests: maxRequests,
+				Cache:       &dbCVECache{db: s.Database},
+			},
+		)
+		cancelCVE()
+		if securityReport == nil {
+			securityReport = &security.Report{Target: env.HealthURL, ScannedAt: time.Now().UTC(), Counts: map[string]int{}}
+		}
+		securityReport.AddFindings(cveFindings...)
+		upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+			Name:    "known vulnerabilities",
+			Command: "cve lookup",
+			Output:  securityReport.Summary(),
+			Success: true,
+		})
 
 		setStatus("running", "Running rollback stage on rehearsal environment...", 88)
 		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost, env.PHPVersion)

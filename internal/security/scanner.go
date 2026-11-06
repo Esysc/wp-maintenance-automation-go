@@ -243,9 +243,9 @@ func (s *scanner) checkCookies(report *Report) {
 
 func (s *scanner) checkHomeContent(report *Report, home *probe) {
 	if m := generatorRe.FindStringSubmatch(home.body); len(m) == 2 {
-		report.add("generator", SeverityLow, "WordPress version is disclosed",
+		report.add("generator", SeverityLow, "Generator meta tag discloses software details",
 			fmt.Sprintf("The page generator meta tag exposes %q.", m[1]),
-			"Remove the WordPress generator meta tag and avoid version numbers in asset URLs.")
+			"Remove generator meta tags added by WordPress, themes, or plugins.")
 	}
 	if debugOutputRe.MatchString(home.body) {
 		report.add("debug-output", SeverityHigh, "PHP errors are displayed in the page",

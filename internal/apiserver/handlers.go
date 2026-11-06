@@ -15,6 +15,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
 )
 
 type profileUser struct {
@@ -108,7 +109,7 @@ func (s *APIServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
-		"version": "1.0.0",
+		"version": version.Version,
 		"time":    time.Now().Format(time.RFC3339),
 	})
 }

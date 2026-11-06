@@ -1,10 +1,39 @@
 package apiserver
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
 )
+
+func TestHandleHealthReportsEmbeddedVersion(t *testing.T) {
+	s := setupTestAPIServer(t)
+	req := httptest.NewRequest("GET", "/api/v1/health", nil)
+	rr := httptest.NewRecorder()
+
+	s.handleHealth(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("handleHealth() status = %d, want %d", rr.Code, http.StatusOK)
+	}
+
+	var body struct {
+		Data struct {
+			Version string `json:"version"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if body.Data.Version != version.Version {
+		t.Fatalf("health version = %q, want %q", body.Data.Version, version.Version)
+	}
+}
 
 func TestEnsureEncryptionKey(t *testing.T) {
 	t.Run("explicit key wins", func(t *testing.T) {

@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 - Regression coverage for SSH exclude matching, archive traversal, restore extraction, staging naming/quoting, config permissions, healthcheck retries, password-change authorization, MySQL option escaping, gzip decompression, restic tag arguments, and encryption key persistence.
+- `scripts/release.sh` automates release bookkeeping: changelog promotion, version updates, checks, commit, annotated tag, push, and GitHub release creation.
+
+### Changed
+- The API health endpoint and CLI banner now report the embedded `internal/version/VERSION` value instead of a hardcoded `1.0.0`.
 
 ### Fixed
 - Staging creation no longer panics when the snapshot ID is shorter than eight characters.

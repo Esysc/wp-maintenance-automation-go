@@ -114,6 +114,7 @@ func Run() {
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	mux.HandleFunc("/static/locales/", s.handleStaticLocales)
 	mux.Handle("/ui/assets/", http.StripPrefix("/ui/", http.FileServer(http.Dir(filepath.Join(staticDir, "ui")))))
 	mux.HandleFunc("/ui/", s.handleUISPA)
 	mux.HandleFunc("/ui", s.handleUISPA)
@@ -209,7 +210,15 @@ func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
+}
+
+// handleStaticLocales serves translation files without long-lived caching so
+// newly added keys appear without requiring a hard refresh.
+func (s *WebServer) handleStaticLocales(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+	http.StripPrefix("/static/", http.FileServer(http.Dir(s.staticDir))).ServeHTTP(w, r)
 }
 
 func (s *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
@@ -613,6 +622,7 @@ func (s *WebServer) proxyStreaming(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleUISPA(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
 }
 

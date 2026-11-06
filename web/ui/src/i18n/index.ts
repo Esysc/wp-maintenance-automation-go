@@ -22,7 +22,7 @@ export async function loadLocale(language: Language): Promise<Record<string, str
   const norm = normalize(language)
   if (cache[norm]) return cache[norm]
   try {
-    const resp = await fetch('/static/locales/' + norm + '.json')
+    const resp = await fetch('/static/locales/' + norm + '.json', { cache: 'no-cache' })
     if (!resp.ok) throw new Error('failed to load locale')
     const data = await resp.json()
     cache[norm] = data

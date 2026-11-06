@@ -357,5 +357,16 @@
   "sandbox_delete_failed": "Failed to delete sandbox",
   "sandbox_deleted": "Sandbox deleted",
   "sandbox_delete_confirm_title": "Delete the test site?",
-  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone."
+  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone.",
+  "nav_security": "Segurança",
+  "page_title_security": "Segurança",
+  "security_scan_title": "Verificação de segurança em produção",
+  "security_scan_desc": "Executa uma revisão de segurança e CVE não invasiva no site de produção ativo. Faz apenas requisições HTTP de leitura e não cria um ambiente de staging.",
+  "security_scan_btn": "Verificar produção",
+  "security_scan_running": "Verificando o site de produção...",
+  "security_scan_confirm_title": "Verificar site de produção ativo",
+  "security_scan_confirm_body": "Isso executa requisições GET não invasivas no site ativo. Não explora vulnerabilidades nem altera dados. Continuar?",
+  "security_scan_done": "Verificação de segurança concluída",
+  "security_scan_failed": "Falha na verificação de segurança",
+  "security_scan_note": "Verificações não invasivas no site de produção ativo. Algumas constatações podem refletir o proxy reverso, CDN ou hospedagem."
 }

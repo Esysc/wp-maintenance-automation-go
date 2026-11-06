@@ -357,5 +357,16 @@
   "sandbox_delete_failed": "Failed to delete sandbox",
   "sandbox_deleted": "Sandbox deleted",
   "sandbox_delete_confirm_title": "Delete the test site?",
-  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone."
+  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone.",
+  "nav_security": "Безопасность",
+  "page_title_security": "Безопасность",
+  "security_scan_title": "Проверка безопасности production",
+  "security_scan_desc": "Запускает неинвазивную проверку безопасности и CVE для работающего production-сайта. Выполняются только HTTP-запросы на чтение, staging-среда не создаётся.",
+  "security_scan_btn": "Проверить production",
+  "security_scan_running": "Проверка production-сайта...",
+  "security_scan_confirm_title": "Проверить работающий production-сайт",
+  "security_scan_confirm_body": "Будут выполнены неинвазивные GET-запросы к работающему сайту. Уязвимости не эксплуатируются, данные не изменяются. Продолжить?",
+  "security_scan_done": "Проверка безопасности завершена",
+  "security_scan_failed": "Не удалось выполнить проверку безопасности",
+  "security_scan_note": "Неинвазивные проверки работающего production-сайта. Некоторые результаты могут относиться к обратному прокси, CDN или хостингу."
 }

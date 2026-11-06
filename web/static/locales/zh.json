@@ -357,5 +357,16 @@
   "sandbox_delete_failed": "Failed to delete sandbox",
   "sandbox_deleted": "Sandbox deleted",
   "sandbox_delete_confirm_title": "Delete the test site?",
-  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone."
+  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone.",
+  "nav_security": "安全",
+  "page_title_security": "安全",
+  "security_scan_title": "生产环境安全扫描",
+  "security_scan_desc": "对运行中的生产站点执行非侵入式安全和 CVE 审查。仅发送只读 HTTP 请求，不会创建预发布环境。",
+  "security_scan_btn": "扫描生产环境",
+  "security_scan_running": "正在扫描生产站点...",
+  "security_scan_confirm_title": "扫描运行中的生产站点",
+  "security_scan_confirm_body": "这将对运行中的站点执行非侵入式 GET 请求。不会利用漏洞或修改任何数据。是否继续？",
+  "security_scan_done": "安全扫描完成",
+  "security_scan_failed": "安全扫描失败",
+  "security_scan_note": "对运行中的生产站点进行非侵入式检查。部分发现项可能反映的是反向代理、CDN 或托管层。"
 }

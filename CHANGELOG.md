@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The Rehearsal page can now embed the running rehearsal site in an iframe through a same-origin authenticated proxy, so no extra tab or self-signed certificate exception is needed.
 - Rehearsal now runs a non-invasive WordPress security review against the upgraded staging site and reports findings with severity, evidence, and recommendations in the UI.
 - Security reviews now include known CVEs: WordPress core/plugins/themes via WPScan (`WPSCAN_API_TOKEN`), bundled Composer dependencies via OSV, and PHP end-of-life status. Results are cached for 24 hours and can be capped with `WPSCAN_MAX_REQUESTS`.
+- The Security page can run an on-demand, non-invasive security and CVE review against the live production site without creating a rehearsal. Production inventory is collected over SSH/WP-CLI.
 
 ### Fixed
 - Rehearsal staging environments no longer fall back to PHP 8.2 when production runs a newer PHP version, preventing plugins that require PHP 8.3+ from fatally breaking WP-CLI. The staging image is now based on the official PHP Apache image so PHP 8.3+ can actually be installed.

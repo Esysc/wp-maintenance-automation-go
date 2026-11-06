@@ -279,7 +279,9 @@ Docker socket access (`/var/run/docker.sock`) must be mounted into the API conta
 
 ## Security Review
 
-Each rehearsal runs a non-invasive security review against the upgraded staging site. It checks common WordPress misconfigurations such as missing security headers, exposed backup/debug files, directory listings, XML-RPC, user enumeration, weak TLS versions, cookie flags, and HTTP TRACE.
+Each rehearsal runs a non-invasive security review against the upgraded staging site. The **Security** page can also run the same review directly against the live production site's `healthcheck_url`, without creating a rehearsal. Production scans collect core/plugin/theme inventory over SSH/WP-CLI; if WP-CLI is unavailable, the report includes an inventory warning.
+
+It checks common WordPress misconfigurations such as missing security headers, exposed backup/debug files, directory listings, XML-RPC, user enumeration, weak TLS versions, cookie flags, and HTTP TRACE.
 
 It also enriches the report with known vulnerabilities:
 

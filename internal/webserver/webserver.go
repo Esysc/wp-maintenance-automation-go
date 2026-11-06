@@ -105,6 +105,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/snapshots/", s.authMiddleware(s.handleAPISnapshots))
 	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleAPIRehearsal))
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
+	mux.HandleFunc("/api/v1/security/scan", s.authMiddleware(s.handleAPISecurityScan))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleAPISandbox))
@@ -417,6 +418,10 @@ func (s *WebServer) handleAPIRehearsal(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPIRehearsalByID(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, r.URL.Path)
+}
+
+func (s *WebServer) handleAPISecurityScan(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequestWithClient(w, r, "/api/v1/security/scan", s.longClient)
 }
 
 func (s *WebServer) handleAPIJobs(w http.ResponseWriter, r *http.Request) {

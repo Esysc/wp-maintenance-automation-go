@@ -357,5 +357,16 @@
   "sandbox_delete_failed": "Failed to delete sandbox",
   "sandbox_deleted": "Sandbox deleted",
   "sandbox_delete_confirm_title": "Delete the test site?",
-  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone."
+  "sandbox_delete_confirm_msg": "This permanently deletes the sandbox site, all of its backups and the sandbox data. This cannot be undone.",
+  "nav_security": "보안",
+  "page_title_security": "보안",
+  "security_scan_title": "프로덕션 보안 검사",
+  "security_scan_desc": "실행 중인 프로덕션 사이트에 대해 비침투 보안 및 CVE 검토를 실행합니다. 읽기 전용 HTTP 요청만 수행하며 스테이징 환경을 만들지 않습니다.",
+  "security_scan_btn": "프로덕션 검사",
+  "security_scan_running": "프로덕션 사이트를 검사하는 중...",
+  "security_scan_confirm_title": "실행 중인 프로덕션 사이트 검사",
+  "security_scan_confirm_body": "실행 중인 사이트에 비침투 GET 요청을 수행합니다. 취약점을 악용하거나 데이터를 변경하지 않습니다. 계속하시겠습니까?",
+  "security_scan_done": "보안 검사가 완료되었습니다",
+  "security_scan_failed": "보안 검사에 실패했습니다",
+  "security_scan_note": "실행 중인 프로덕션 사이트에 대한 비침투 검사입니다. 일부 발견 항목은 리버스 프록시, CDN 또는 호스팅 계층에 해당할 수 있습니다."
 }

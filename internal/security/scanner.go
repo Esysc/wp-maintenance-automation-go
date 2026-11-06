@@ -355,12 +355,6 @@ func (s *scanner) checkWordPressEndpoints(report *Report) {
 			"Enable two-factor authentication and login rate limiting for all administrator accounts.")
 	}
 
-	if p, err := s.get("/wp-cron.php"); err == nil && p.status == http.StatusOK {
-		report.add("wp-cron", SeverityLow, "WP-Cron is reachable over HTTP",
-			"External requests can trigger scheduled tasks and add load.",
-			"Disable WP-Cron and run it from the system scheduler on production.")
-	}
-
 	if p, err := s.get("/wp-json/"); err == nil && p.status == http.StatusOK {
 		report.add("rest-api", SeverityInfo, "WordPress REST API is publicly reachable",
 			"The REST API is expected for many plugins and blocks, but its surface should be reviewed.",

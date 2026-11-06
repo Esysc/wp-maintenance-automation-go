@@ -57,7 +57,6 @@ func TestScanFindsCommonWordPressIssues(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"name":"Test"}`))
 	})
-	mux.HandleFunc("/wp-cron.php", handler(""))
 	mux.HandleFunc("/.well-known/security.txt", func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	})
@@ -90,7 +89,6 @@ func TestScanFindsCommonWordPressIssues(t *testing.T) {
 		"readme":            SeverityLow,
 		"server-banner":     SeverityLow,
 		"powered-by":        SeverityLow,
-		"wp-cron":           SeverityLow,
 		"security-txt":      SeverityInfo,
 		"login":             SeverityInfo,
 		"rest-api":          SeverityInfo,

@@ -1187,7 +1187,7 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 // origin, TLS certificate, and authentication as the main UI.
 func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/rehearsal-site/")
-	jobID, targetPath, hasSlash := strings.Cut(rest, "/")
+	jobID, _, hasSlash := strings.Cut(rest, "/")
 	if jobID == "" {
 		http.NotFound(w, r)
 		return
@@ -1209,6 +1209,7 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 
 	var envData struct {
 		HealthURL  string `json:"health_url"`
+		ProxyURL   string `json:"proxy_url"`
 		PreviewURL string `json:"preview_url"`
 	}
 	if err := json.Unmarshal([]byte(job.Result), &envData); err != nil || envData.HealthURL == "" {
@@ -1216,15 +1217,19 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	targetURL, err := url.Parse(envData.HealthURL)
+	target := envData.ProxyURL
+	if strings.TrimSpace(target) == "" {
+		target = envData.HealthURL
+	}
+	targetURL, err := url.Parse(target)
 	if err != nil {
 		http.Error(w, "invalid rehearsal target", http.StatusInternalServerError)
 		return
 	}
 
-	forwardPath := "/"
-	if targetPath != "" {
-		forwardPath = "/" + targetPath
+	forwardPath := r.URL.Path
+	if forwardPath == "" {
+		forwardPath = "/"
 	}
 	previewPrefix := "/rehearsal-site/" + jobID
 
@@ -1249,7 +1254,9 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 				resp.Header.Set("Content-Security-Policy", removeCSPDirective(csp, "frame-ancestors"))
 			}
 			if location := resp.Header.Get("Location"); location != "" {
-				resp.Header.Set("Location", rewriteRehearsalLocation(location, envData.HealthURL, previewPrefix))
+				location = rewriteRehearsalLocation(location, envData.HealthURL, previewPrefix)
+				location = rewriteRehearsalLocation(location, envData.ProxyURL, previewPrefix)
+				resp.Header.Set("Location", location)
 			}
 			return nil
 		},

@@ -28,7 +28,7 @@ RUN apt-get update \
  && docker-php-ext-install -j"$(nproc)" gd mysqli zip \
  && rm -rf /var/lib/apt/lists/*
 
-RUN a2enmod rewrite ssl
+RUN a2enmod rewrite ssl setenvif
 RUN mkdir -p /etc/apache2/ssl \
  && openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
     -keyout /etc/apache2/ssl/localhost.key \
@@ -37,6 +37,7 @@ RUN mkdir -p /etc/apache2/ssl \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 COPY apache-default-ssl.conf /etc/apache2/sites-available/default-ssl.conf
+COPY apache-rehearsal-preview.conf /etc/apache2/conf-enabled/rehearsal-preview.conf
 RUN a2ensite default-ssl
 
 RUN curl -fS -o /usr/local/bin/wp-cli https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \

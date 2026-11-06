@@ -41,8 +41,8 @@ func TestHandleRehearsalSiteProxiesThroughPreviewPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
 	}
-	if gotPath != "/some/page" {
-		t.Fatalf("proxied path = %q, want %q", gotPath, "/some/page")
+	if gotPath != "/rehearsal-site/rehearsal-preview-1/some/page" {
+		t.Fatalf("proxied path = %q, want %q", gotPath, "/rehearsal-site/rehearsal-preview-1/some/page")
 	}
 	if gotHost != "app.test" {
 		t.Fatalf("proxied host = %q, want %q", gotHost, "app.test")

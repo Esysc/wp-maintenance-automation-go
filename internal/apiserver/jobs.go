@@ -946,8 +946,14 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "Staging environment ready", 96)
+		proxyHost := rolledBackEnv.PublicHost
+		if proxyHost == "" {
+			proxyHost = "localhost"
+		}
+		proxyURL := fmt.Sprintf("http://%s:%s", proxyHost, rolledBackEnv.WPSPort)
 		resultJSON, _ := json.Marshal(map[string]interface{}{
 			"health_url":         rolledBackEnv.HealthURL,
+			"proxy_url":          proxyURL,
 			"preview_url":        previewURL,
 			"compose_file":       rolledBackEnv.ComposeFile,
 			"project_name":       rolledBackEnv.ProjectName,

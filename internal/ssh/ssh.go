@@ -660,7 +660,11 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		if relPath == "." {
 			return nil
 		}
-		if isExcluded(relPath) {
+		// Archive names and remote listings always use forward slashes.
+		// Keep sentFiles keyed the same way so the delete pass behaves on
+		// Windows as well as on Unix.
+		archivePath := filepath.ToSlash(relPath)
+		if isExcluded(archivePath) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -668,7 +672,7 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		}
 
 		if onFile != nil {
-			onFile(relPath)
+			onFile(archivePath)
 		}
 
 		info, err := os.Stat(path)
@@ -680,14 +684,14 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		if err != nil {
 			return err
 		}
-		header.Name = filepath.ToSlash(relPath)
+		header.Name = archivePath
 
 		if info.IsDir() {
 			header.Name += "/"
 			return tw.WriteHeader(header)
 		}
 
-		sentFiles[relPath] = struct{}{}
+		sentFiles[archivePath] = struct{}{}
 
 		if err := tw.WriteHeader(header); err != nil {
 			return err
@@ -727,7 +731,7 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 				continue
 			}
 			if _, sent := sentFiles[f]; !sent {
-				c.RunCommand(fmt.Sprintf("rm -f %s", shellQuote(filepath.Join(destDir, f))))
+				c.RunCommand(fmt.Sprintf("rm -f %s", shellQuote(path.Join(destDir, f))))
 			}
 		}
 		c.RunCommand(fmt.Sprintf("find %s -type d -empty -delete 2>/dev/null || true", shellQuote(destDir)))

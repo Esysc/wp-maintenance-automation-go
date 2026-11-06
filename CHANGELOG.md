@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Restic `Tag` now honors removal requests and uses `--add`/`--remove` instead of replacing all tags with `--set`.
 - Sync excludes now match relative paths and directory prefixes, and excluded remote files are preserved when `--delete` is enabled.
 - Tar upload closes source files promptly, and healthchecks drain response bodies before closing them.
+- Tar upload keeps archive paths, sent-file keys, and remote delete paths slash-normalized, preventing unintended remote deletions when running on Windows.
 - Healthcheck retry counts below one are clamped to a single attempt instead of skipping a check.
 - Sandbox connection state and start-log success reads are synchronized to remove data races.
 - `LoadConfig` now publishes `GlobalConfig` even when the config file does not exist.

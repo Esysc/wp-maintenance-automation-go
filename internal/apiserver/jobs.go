@@ -937,12 +937,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 		previewURL := ""
 		if base := strings.TrimRight(strings.TrimSpace(tuple.req.PublicBaseURL), "/"); base != "" {
-			candidate := base + "/rehearsal-site/" + job.ID
-			if err := rolledBackEnv.SetSiteURL(candidate); err != nil {
-				log.Printf("rehearsal: failed to enable embedded preview: %v", err)
-			} else {
-				previewURL = candidate
-			}
+			previewURL = base + "/rehearsal-site/" + job.ID
 		}
 
 		setStatus("running", "Staging environment ready", 96)

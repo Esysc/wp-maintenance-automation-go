@@ -37,7 +37,6 @@ RUN mkdir -p /etc/apache2/ssl \
     -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
 
 COPY apache-default-ssl.conf /etc/apache2/sites-available/default-ssl.conf
-COPY apache-rehearsal-preview.conf /etc/apache2/conf-enabled/rehearsal-preview.conf
 RUN a2ensite default-ssl
 
 RUN curl -fS -o /usr/local/bin/wp-cli https://raw.githubusercontent.com/wp-cli/builds/gh-pages/phar/wp-cli.phar \

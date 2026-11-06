@@ -1,15 +1,18 @@
 package apiserver
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1187,7 +1190,7 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 // origin, TLS certificate, and authentication as the main UI.
 func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/rehearsal-site/")
-	jobID, _, hasSlash := strings.Cut(rest, "/")
+	jobID, targetPath, hasSlash := strings.Cut(rest, "/")
 	if jobID == "" {
 		http.NotFound(w, r)
 		return
@@ -1226,42 +1229,90 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid rehearsal target", http.StatusInternalServerError)
 		return
 	}
+	siteHost := targetURL.Host
+	if healthURL, err := url.Parse(envData.HealthURL); err == nil && healthURL.Host != "" {
+		// The public site URL uses the HTTPS port. The proxy may connect to
+		// the HTTP port, but WordPress must still see the canonical host.
+		siteHost = healthURL.Host
+	}
 
-	forwardPath := r.URL.Path
-	if forwardPath == "" {
-		forwardPath = "/"
+	forwardPath := "/"
+	if targetPath != "" {
+		forwardPath = "/" + targetPath
 	}
 	previewPrefix := "/rehearsal-site/" + jobID
+	origins := []string{envData.HealthURL, envData.ProxyURL}
 
 	proxy := &httputil.ReverseProxy{
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			TLSClientConfig:    &tls.Config{InsecureSkipVerify: true},
+			DisableCompression: true,
 		},
 		Director: func(req *http.Request) {
 			req.URL.Scheme = targetURL.Scheme
 			req.URL.Host = targetURL.Host
 			req.URL.Path = forwardPath
 			req.URL.RawQuery = r.URL.RawQuery
-			if host := r.Header.Get("X-Forwarded-Host"); host != "" {
-				req.Host = host
-			} else {
-				req.Host = r.Host
-			}
+			req.Host = siteHost
+			// The staging site URL is always the direct HTTPS URL. Telling
+			// WordPress the request is HTTPS avoids canonical scheme redirects.
+			req.Header.Set("X-Forwarded-Proto", "https")
+			req.Header.Del("Accept-Encoding")
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del("X-Frame-Options")
 			if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
 				resp.Header.Set("Content-Security-Policy", removeCSPDirective(csp, "frame-ancestors"))
 			}
-			if location := resp.Header.Get("Location"); location != "" {
-				location = rewriteRehearsalLocation(location, envData.HealthURL, previewPrefix)
-				location = rewriteRehearsalLocation(location, envData.ProxyURL, previewPrefix)
-				resp.Header.Set("Location", location)
+			for _, header := range []string{"Location", "Content-Location", "Link", "X-TEC-API-ROOT", "X-TEC-API-ORIGIN"} {
+				if value := resp.Header.Get(header); value != "" {
+					resp.Header.Set(header, rewriteRehearsalOrigins(value, origins, previewPrefix))
+				}
 			}
+
+			if !isTextResponse(resp.Header.Get("Content-Type")) {
+				return nil
+			}
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				return err
+			}
+			rewritten := rewriteRehearsalOrigins(string(body), origins, previewPrefix)
+			resp.Body = io.NopCloser(bytes.NewReader([]byte(rewritten)))
+			resp.ContentLength = int64(len(rewritten))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+			resp.Header.Del("Content-Encoding")
 			return nil
 		},
 	}
 	proxy.ServeHTTP(w, r)
+}
+
+func isTextResponse(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	switch contentType {
+	case "application/json", "application/javascript", "application/xml",
+		"application/xhtml+xml", "image/svg+xml":
+		return true
+	}
+	return strings.HasPrefix(contentType, "text/")
+}
+
+// rewriteRehearsalOrigins rewrites the staging origin(s) back to the
+// application preview prefix so the browser keeps using the same origin.
+func rewriteRehearsalOrigins(value string, origins []string, previewPrefix string) string {
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin == "" {
+			continue
+		}
+		value = strings.ReplaceAll(value, origin, previewPrefix)
+		if u, err := url.Parse(origin); err == nil && u.Host != "" {
+			value = strings.ReplaceAll(value, "//"+u.Host, previewPrefix)
+		}
+	}
+	return value
 }
 
 func removeCSPDirective(csp, directive string) string {
@@ -1278,14 +1329,6 @@ func removeCSPDirective(csp, directive string) string {
 		kept = append(kept, part)
 	}
 	return strings.Join(kept, "; ")
-}
-
-func rewriteRehearsalLocation(location, directBase, previewPrefix string) string {
-	directBase = strings.TrimRight(directBase, "/")
-	if strings.HasPrefix(location, directBase) {
-		return previewPrefix + strings.TrimPrefix(location, directBase)
-	}
-	return location
 }
 
 func (s *APIServer) handleRehearsalByID(w http.ResponseWriter, r *http.Request) {

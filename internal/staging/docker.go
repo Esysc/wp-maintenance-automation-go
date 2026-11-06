@@ -553,35 +553,6 @@ func (env *StagingEnv) updateSiteURL() error {
 	return nil
 }
 
-// SetSiteURL points the staging site at a new public URL, such as the
-// application's same-origin rehearsal preview path.
-func (env *StagingEnv) SetSiteURL(newURL string) error {
-	newURL = strings.TrimRight(strings.TrimSpace(newURL), "/")
-	if newURL == "" {
-		return fmt.Errorf("site URL is required")
-	}
-
-	oldURL, err := env.getSiteURL()
-	if err != nil {
-		return fmt.Errorf("failed to read current site URL: %w", err)
-	}
-	if strings.TrimSpace(oldURL) == "" {
-		return fmt.Errorf("current site URL is empty")
-	}
-
-	log.Printf("staging: switching site URL from '%s' to '%s'", oldURL, newURL)
-	env.applySiteURL(oldURL, newURL)
-
-	gotURL, err := env.getSiteURL()
-	if err != nil {
-		return fmt.Errorf("failed to verify site URL: %w", err)
-	}
-	if strings.TrimRight(strings.TrimSpace(gotURL), "/") != newURL {
-		return fmt.Errorf("site URL update did not take effect (got %q)", gotURL)
-	}
-	return nil
-}
-
 func (env *StagingEnv) applySiteURL(oldURL, newURL string) {
 	prefixSQL := strings.TrimSpace(env.TablePrefix)
 	if prefixSQL == "" {

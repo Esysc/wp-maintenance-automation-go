@@ -3,6 +3,7 @@ package apiserver
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
@@ -41,11 +42,11 @@ func TestHandleRehearsalSiteProxiesThroughPreviewPath(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusOK, rr.Body.String())
 	}
-	if gotPath != "/rehearsal-site/rehearsal-preview-1/some/page" {
-		t.Fatalf("proxied path = %q, want %q", gotPath, "/rehearsal-site/rehearsal-preview-1/some/page")
+	if gotPath != "/some/page" {
+		t.Fatalf("proxied path = %q, want %q", gotPath, "/some/page")
 	}
-	if gotHost != "app.test" {
-		t.Fatalf("proxied host = %q, want %q", gotHost, "app.test")
+	if wantHost := strings.TrimPrefix(target.URL, "http://"); gotHost != wantHost {
+		t.Fatalf("proxied host = %q, want %q", gotHost, wantHost)
 	}
 	if rr.Header().Get("X-Frame-Options") != "" {
 		t.Fatalf("X-Frame-Options was not stripped: %q", rr.Header().Get("X-Frame-Options"))
@@ -82,18 +83,16 @@ func TestHandleRehearsalSiteReturnsNotFoundForMissingJob(t *testing.T) {
 	}
 }
 
-func TestRewriteRehearsalLocation(t *testing.T) {
-	got := rewriteRehearsalLocation(
-		"https://192.168.1.10:32773/wp-admin/",
-		"https://192.168.1.10:32773",
-		"/rehearsal-site/job-1",
-	)
-	if got != "/rehearsal-site/job-1/wp-admin/" {
-		t.Fatalf("rewriteRehearsalLocation() = %q", got)
-	}
-
-	unchanged := rewriteRehearsalLocation("/wp-admin/", "https://192.168.1.10:32773", "/rehearsal-site/job-1")
-	if unchanged != "/wp-admin/" {
-		t.Fatalf("relative location changed to %q", unchanged)
+func TestRewriteRehearsalOrigins(t *testing.T) {
+	origins := []string{"https://192.168.1.10:32773", "http://192.168.1.10:32774"}
+	input := `<a href="https://192.168.1.10:32773/wp-admin/">admin</a>` +
+		`<img src="http://192.168.1.10:32774/wp-content/a.png">` +
+		`<script src="//192.168.1.10:32773/wp-includes/js/a.js"></script>`
+	got := rewriteRehearsalOrigins(input, origins, "/rehearsal-site/job-1")
+	want := `<a href="/rehearsal-site/job-1/wp-admin/">admin</a>` +
+		`<img src="/rehearsal-site/job-1/wp-content/a.png">` +
+		`<script src="/rehearsal-site/job-1/wp-includes/js/a.js"></script>`
+	if got != want {
+		t.Fatalf("rewriteRehearsalOrigins() = %q, want %q", got, want)
 	}
 }

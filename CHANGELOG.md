@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Security
+- Remote paths used by SSH file and WP-CLI helpers are now shell-quoted, preventing command injection through crafted paths.
+- SSH sync and restore now reject tar entries that use absolute paths or `..` traversal.
+- Database restores use a permission-restricted MySQL option file instead of passing credentials inline on the command line, and generated remote temp names no longer include the snapshot ID.
+- Staging setup now escapes MySQL identifiers and credentials derived from backup contents.
+- Password changes are bound to the authenticated user; attempts to supply another user's ID are rejected.
+- Configuration files containing secrets are written with `0600` permissions.
+- When no encryption key is configured, the server generates and persists a random `data/encryption.key`, while retaining a decrypt fallback for data encrypted by older versions.
+
+### Added
+- Regression coverage for SSH exclude matching, archive traversal, restore extraction, staging naming/quoting, config permissions, healthcheck retries, password-change authorization, MySQL option escaping, gzip decompression, restic tag arguments, and encryption key persistence.
+
+### Fixed
+- Staging creation no longer panics when the snapshot ID is shorter than eight characters.
+- The WP_HOME/WP_SITEURL cleanup command in staging now uses a valid `sed` expression and fails creation if it cannot run.
+- Restore decompresses `.sql.gz` dumps locally instead of relying on a remote shell pipeline that could silently import an empty database.
+- Restic `Tag` now honors removal requests and uses `--add`/`--remove` instead of replacing all tags with `--set`.
+- Sync excludes now match relative paths and directory prefixes, and excluded remote files are preserved when `--delete` is enabled.
+- Tar upload closes source files promptly, and healthchecks drain response bodies before closing them.
+- Healthcheck retry counts below one are clamped to a single attempt instead of skipping a check.
+- Sandbox connection state and start-log success reads are synchronized to remove data races.
+- `LoadConfig` now publishes `GlobalConfig` even when the config file does not exist.
+- `.gitignore` no longer hides the `internal/restore` source package.
+
 ## [0.5.2] - 2026-08-16
 
 ### Added

@@ -18,6 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - The web proxy now keeps the snapshot ID when forwarding `/api/v1/snapshots/<id>` requests, fixing `405 Method Not Allowed` errors when deleting a snapshot from the UI.
 - Restic deletions now detect stale repository locks, run `restic unlock`, and retry the forget operation instead of returning a 500.
 - Production PHP detection now uses `wp --info` with a bounded per-command timeout, so an unresponsive WP-CLI or SSH host cannot block a rehearsal indefinitely.
+- Staging now strips production cache drop-ins and the `WP_CACHE`/`WPCACHEHOME` constants, and Apache sets `HTTP_X_FORWARDED_PROTO=https`. This removes PHP warnings and stale production cache output from rehearsal pages, so the production-vs-rehearsal comparison reflects the actual upgrade.
 
 ## [0.5.3] - 2026-11-06
 

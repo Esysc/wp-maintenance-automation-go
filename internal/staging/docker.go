@@ -75,10 +75,11 @@ type CreateOptions struct {
 	PHPVersion string
 }
 
-// removeWPConfigConstantsScript removes active WP_HOME and WP_SITEURL
-// definitions from wp-config.php (in both quote styles) so the staging URL
-// stored in the database takes effect. Commented-out definitions are kept.
-const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]WP_\(HOME\|SITEURL\)['"]/d`
+// removeWPConfigConstantsScript removes active WP_HOME, WP_SITEURL,
+// WPCACHEHOME, and WP_CACHE definitions from wp-config.php (in both quote
+// styles) so the staging copy uses its own URL, cache path, and fresh content.
+// Commented-out definitions are kept.
+const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]\(WP_HOME\|WP_SITEURL\|WPCACHEHOME\|WP_CACHE\)['"]/d`
 
 func (m *Manager) CreateWithOptions(snapshotID string, rc *restic.ResticClient, opts CreateOptions) (*StagingEnv, error) {
 	snapshotID = strings.TrimSpace(snapshotID)
@@ -153,13 +154,18 @@ func (m *Manager) CreateWithOptions(snapshotID string, rc *restic.ResticClient, 
 		return nil, fmt.Errorf("file copy failed: %w", err)
 	}
 
+	if err := env.disableStagingCaches(); err != nil {
+		env.cleanup(false)
+		return nil, fmt.Errorf("staging cache disabling failed: %w", err)
+	}
+
 	if err := env.patchWPConfig(); err != nil {
 		env.cleanup(false)
 		return nil, fmt.Errorf("wp-config patch failed: %w", err)
 	}
 
-	// Remove WP_HOME and WP_SITEURL constants from wp-config.php so they
-	// don't override the database values we set in updateSiteURL().
+	// Remove site URL and cache-path constants from wp-config.php so the
+	// staging URL from the database and the staging cache paths take effect.
 	removeConstCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
@@ -464,6 +470,27 @@ func (env *StagingEnv) copyFiles() error {
 	rmCmd.Env = os.Environ()
 	rmCmd.Run()
 
+	return nil
+}
+
+// disableStagingCaches removes page-cache and object-cache drop-ins copied
+// from production. Their absolute paths and backing services belong to the
+// production host, and serving a cached production page would hide upgrade
+// changes from the rehearsal healthcheck and page comparison.
+func (env *StagingEnv) disableStagingCaches() error {
+	cmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp",
+		"rm", "-rf",
+		"/var/www/html/wp-content/advanced-cache.php",
+		"/var/www/html/wp-content/object-cache.php",
+		"/var/www/html/wp-content/cache",
+	)
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w\nOutput: %s", err, string(out))
+	}
 	return nil
 }
 

@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"archive/tar"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -224,6 +225,41 @@ func (c *SSHClient) RunCommand(cmd string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+// runCommandWithTimeout runs a remote command but abandons it when the timeout
+// expires. Closing the SSH session terminates the remote command and prevents
+// a single unresponsive probe from blocking the job worker indefinitely.
+func (c *SSHClient) runCommandWithTimeout(cmd string, timeout time.Duration) (string, error) {
+	if err := c.connect(); err != nil {
+		return "", err
+	}
+	session, err := c.conn.NewSession()
+	if err != nil {
+		return "", fmt.Errorf("SSH session failed: %w", err)
+	}
+	defer session.Close()
+
+	type result struct {
+		output []byte
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		output, err := session.CombinedOutput(cmd)
+		done <- result{output: output, err: err}
+	}()
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			return "", fmt.Errorf("SSH command failed: %w\nOutput: %s", r.err, string(r.output))
+		}
+		return strings.TrimSpace(string(r.output)), nil
+	case <-time.After(timeout):
+		session.Close()
+		return "", fmt.Errorf("SSH command timed out after %s", timeout)
+	}
+}
+
 func (c *SSHClient) RunCommandRaw(cmd string) string {
 	out, err := c.RunCommand(cmd)
 	if err != nil {
@@ -331,24 +367,21 @@ func parseWpVersion(content string) string {
 }
 
 // GetPHPVersion returns the PHP version used to run WordPress on the remote
-// host. WP-CLI is preferred because it uses the same interpreter as WordPress
-// upgrades; the system PHP CLI is used as a fallback.
+// host. WP-CLI's own info command is preferred because it resolves quickly and
+// uses the same interpreter as WordPress upgrades; the system PHP CLI is used
+// as a fallback. Each probe has a bounded timeout so an unresponsive host or
+// WP-CLI bootstrap cannot block the job worker.
 func (c *SSHClient) GetPHPVersion(wpRoot string) (string, error) {
-	var commands []string
-	if root := strings.TrimSpace(wpRoot); root != "" {
-		commands = append(commands, fmt.Sprintf(
-			"cd %s && wp eval 'echo PHP_VERSION;' --skip-plugins --skip-themes 2>/dev/null",
-			ShellQuote(root),
-		))
-	}
-	commands = append(commands,
+	commands := []string{
+		"wp --info --format=json 2>/dev/null",
 		"php -r 'echo PHP_VERSION;' 2>/dev/null",
 		"php -v 2>/dev/null",
-	)
+	}
 
+	timeout := 20 * time.Second
 	var lastErr error
 	for _, cmd := range commands {
-		out, err := c.RunCommand(cmd)
+		out, err := c.runCommandWithTimeout(cmd, timeout)
 		if err != nil {
 			lastErr = err
 			continue
@@ -366,11 +399,22 @@ func (c *SSHClient) GetPHPVersion(wpRoot string) (string, error) {
 
 var phpVersionOutputRe = regexp.MustCompile(`(?i)\bPHP\s+v?(\d+\.\d+(?:\.\d+)?)`)
 var barePHPVersionRe = regexp.MustCompile(`^\s*v?(\d+\.\d+(?:\.\d+)?)\s*$`)
+var jsonPHPVersionRe = regexp.MustCompile(`(?i)"?php_version"?\s*:\s*"([^"]+)"`)
 
 func parsePHPVersion(output string) string {
 	output = strings.TrimSpace(output)
 	if output == "" {
 		return ""
+	}
+
+	var info struct {
+		PHPVersion string `json:"php_version"`
+	}
+	if err := json.Unmarshal([]byte(output), &info); err == nil && info.PHPVersion != "" {
+		return info.PHPVersion
+	}
+	if m := jsonPHPVersionRe.FindStringSubmatch(output); len(m) == 2 {
+		return m[1]
 	}
 	if m := phpVersionOutputRe.FindStringSubmatch(output); len(m) == 2 {
 		return m[1]

@@ -268,7 +268,7 @@ Each WordPress site is configured through the Web UI and stored in the database 
 When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an ephemeral Docker-based staging rehearsal before the production upgrade:
 
 1. **Restore** — the latest restic snapshot is extracted to a temp directory
-2. **Detect versions** — WP version, DB version (MariaDB/MySQL), and credentials are read from the backup artifacts
+2. **Detect versions** — the WP version and DB credentials are read from the backup artifacts, and the production PHP major/minor version is detected over SSH so the staging stack mirrors production
 3. **Spin up containers** — a WordPress + MariaDB/MySQL stack is created via Docker Compose with matching versions, self-signed SSL, and WP-CLI
 4. **Seed the environment** — DB dump is imported, WordPress files are copied, `wp-config.php` is patched, and `siteurl`/`home` are updated to `https://localhost:<mapped_port>`
 5. **Run upgrade** — the full WP-CLI upgrade sequence runs against the staging container

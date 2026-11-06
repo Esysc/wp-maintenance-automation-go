@@ -177,13 +177,16 @@ func runRehearsalUpgradeStage(env *staging.StagingEnv) []rehearsalUpgradeStep {
 		command   string
 		allowFail bool
 	}{
-		{name: "core update", command: "core update", allowFail: false},
-		{name: "plugin update", command: "plugin update --all", allowFail: true},
-		{name: "theme update", command: "theme update --all", allowFail: true},
-		{name: "language core update", command: "language core update", allowFail: true},
-		{name: "language plugin update", command: "language plugin update --all", allowFail: true},
-		{name: "language theme update", command: "language theme update --all", allowFail: true},
-		{name: "database update", command: "core update-db", allowFail: true},
+		// Skip plugin and theme loading during the upgrade stage. A plugin that
+		// is incompatible with the staging PHP version must not abort the whole
+		// rehearsal before the healthcheck can report the real problem.
+		{name: "core update", command: "core update --skip-plugins --skip-themes", allowFail: false},
+		{name: "plugin update", command: "plugin update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "theme update", command: "theme update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "language core update", command: "language core update --skip-plugins --skip-themes", allowFail: true},
+		{name: "language plugin update", command: "language plugin update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "language theme update", command: "language theme update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "database update", command: "core update-db --skip-plugins --skip-themes", allowFail: true},
 	}
 
 	results := make([]rehearsalUpgradeStep, 0, len(steps))
@@ -207,7 +210,7 @@ func runRehearsalUpgradeStage(env *staging.StagingEnv) []rehearsalUpgradeStep {
 	return results
 }
 
-func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snapshotID string, rc *restic.ResticClient, publicHost string) (*staging.StagingEnv, []rehearsalUpgradeStep, error) {
+func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snapshotID string, rc *restic.ResticClient, publicHost, phpVersion string) (*staging.StagingEnv, []rehearsalUpgradeStep, error) {
 	steps := []rehearsalUpgradeStep{}
 
 	if err := m.Destroy(env); err != nil {
@@ -226,7 +229,10 @@ func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snap
 		Success: true,
 	})
 
-	rolledBackEnv, err := m.CreateWithPublicHost(snapshotID, rc, publicHost)
+	rolledBackEnv, err := m.CreateWithOptions(snapshotID, rc, staging.CreateOptions{
+		PublicHost: publicHost,
+		PHPVersion: phpVersion,
+	})
 	if err != nil {
 		steps = append(steps, rehearsalUpgradeStep{
 			Name:    "restore snapshot into fresh staging environment",
@@ -770,7 +776,17 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "Restoring snapshot to staging...", 30)
-		env, err := s.StagingManager.CreateWithPublicHost(snapshotID, resticClient, tuple.req.PublicHost)
+		productionPHPVersion := ""
+		if version, err := sshClient.GetPHPVersion(wpRoot); err != nil {
+			log.Printf("rehearsal: could not detect production PHP version: %v", err)
+		} else {
+			productionPHPVersion = strings.TrimSpace(version)
+			log.Printf("rehearsal: detected production PHP version %s", productionPHPVersion)
+		}
+		env, err := s.StagingManager.CreateWithOptions(snapshotID, resticClient, staging.CreateOptions{
+			PublicHost: tuple.req.PublicHost,
+			PHPVersion: productionPHPVersion,
+		})
 		if err != nil {
 			setError("failed to create staging environment: " + err.Error())
 			return
@@ -862,7 +878,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "Running rollback stage on rehearsal environment...", 88)
-		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost)
+		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost, env.PHPVersion)
 		if err != nil {
 			setError("rehearsal rollback stage failed: " + err.Error())
 			return
@@ -881,8 +897,20 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
+		var rehearsalFailures []string
+		if healthcheckErr != nil {
+			rehearsalFailures = append(rehearsalFailures, "rehearsal healthcheck failed: "+healthcheckErr.Error())
+		}
 		if comparisonErr != nil {
-			setError("production and rehearsal page comparison failed: " + comparisonErr.Error())
+			rehearsalFailures = append(rehearsalFailures, "production and rehearsal page comparison failed: "+comparisonErr.Error())
+		}
+		if len(rehearsalFailures) > 0 {
+			// The rollback already replaced the upgraded environment with a
+			// pristine copy of the snapshot, so there is nothing left to debug.
+			if err := s.StagingManager.Destroy(rolledBackEnv); err != nil {
+				log.Printf("rehearsal: failed to clean up rolled-back staging environment: %v", err)
+			}
+			setError(strings.Join(rehearsalFailures, "; "))
 			return
 		}
 
@@ -893,6 +921,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			"project_name":       rolledBackEnv.ProjectName,
 			"restore_dir":        rolledBackEnv.RestoreDir,
 			"wp_version":         rolledBackEnv.WPVersion,
+			"php_version":        rolledBackEnv.PHPVersion,
 			"db_name":            rolledBackEnv.DBName,
 			"snapshot_id":        snapshotID,
 			"upgrade_steps":      upgradeSteps,

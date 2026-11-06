@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,7 +57,22 @@ func NewEnv(composeFile, projectName, restoreDir, healthURL string) *StagingEnv 
 }
 
 func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEnv, error) {
-	return m.CreateWithPublicHost(snapshotID, rc, "")
+	return m.CreateWithOptions(snapshotID, rc, CreateOptions{})
+}
+
+// CreateWithPublicHost creates a staging environment and sets the host used in
+// its public healthcheck URL.
+func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClient, publicHost string) (*StagingEnv, error) {
+	return m.CreateWithOptions(snapshotID, rc, CreateOptions{PublicHost: publicHost})
+}
+
+// CreateOptions controls how a staging environment is built.
+type CreateOptions struct {
+	// PublicHost is the hostname used in the staging healthcheck URL.
+	PublicHost string
+	// PHPVersion is the production PHP version to mirror (for example
+	// "8.3" or "8.3.27"). The major/minor pair is used for the Docker image.
+	PHPVersion string
 }
 
 // removeWPConfigConstantsScript removes active WP_HOME and WP_SITEURL
@@ -64,7 +80,7 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 // stored in the database takes effect. Commented-out definitions are kept.
 const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]WP_\(HOME\|SITEURL\)['"]/d`
 
-func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClient, publicHost string) (*StagingEnv, error) {
+func (m *Manager) CreateWithOptions(snapshotID string, rc *restic.ResticClient, opts CreateOptions) (*StagingEnv, error) {
 	snapshotID = strings.TrimSpace(snapshotID)
 	if snapshotID == "" {
 		return nil, fmt.Errorf("snapshot ID is required")
@@ -79,7 +95,7 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 		SnapshotID:   snapshotID,
 		RestoreDir:   restoreDir,
 		ProjectName:  stagingProjectName(snapshotID),
-		PublicHost:   strings.TrimSpace(publicHost),
+		PublicHost:   strings.TrimSpace(opts.PublicHost),
 		BuildContext: m.buildContext,
 	}
 
@@ -91,6 +107,13 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	if err := env.detectVersions(restoreDir); err != nil {
 		os.RemoveAll(restoreDir)
 		return nil, fmt.Errorf("version detection failed: %w", err)
+	}
+
+	// Mirror the production PHP version when it was detected. Falling back to
+	// detectVersions' default keeps staging usable when detection is not
+	// possible.
+	if phpVersion := NormalizePHPVersion(opts.PHPVersion); phpVersion != "" {
+		env.PHPVersion = phpVersion
 	}
 
 	if err := env.detectDBCredentials(restoreDir); err != nil {
@@ -206,7 +229,9 @@ func (env *StagingEnv) WPCLI(args string) (string, error) {
 		"compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
-		"exec", "-T", "wp",
+		"exec", "-T",
+		"-e", "HTTP_X_FORWARDED_PROTO=https",
+		"wp",
 		"wp", "--allow-root", "--path=/var/www/html",
 	}
 	if len(globalArgs) > 0 {
@@ -215,7 +240,6 @@ func (env *StagingEnv) WPCLI(args string) (string, error) {
 	cmdArgs = append(cmdArgs, commandArgs...)
 	cmd := exec.Command("docker", cmdArgs...)
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "HTTP_X_FORWARDED_PROTO=https")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("wp-cli failed: %w\nOutput: %s", err, string(output))
@@ -790,6 +814,30 @@ var dbNameRe = regexp.MustCompile(`define\s*\(\s*['"]DB_NAME['"]\s*,\s*['"]([^'"
 var dbUserRe = regexp.MustCompile(`define\s*\(\s*['"]DB_USER['"]\s*,\s*['"]([^'"]+)['"]`)
 var dbPassRe = regexp.MustCompile(`define\s*\(\s*['"]DB_PASSWORD['"]\s*,\s*['"]([^'"]+)['"]`)
 
+var phpVersionRe = regexp.MustCompile(`(?i)^\s*(?:PHP\s+)?v?(\d+)\.(\d+)`)
+
+// NormalizePHPVersion extracts the major.minor pair used for Docker image tags
+// from a PHP version string such as "8.3.27" or "PHP 8.3.27". It returns an
+// empty string when the value is not a supported PHP version.
+func NormalizePHPVersion(version string) string {
+	matches := phpVersionRe.FindStringSubmatch(strings.TrimSpace(version))
+	if len(matches) != 3 {
+		return ""
+	}
+	major, err := strconv.Atoi(matches[1])
+	if err != nil || major < 7 {
+		return ""
+	}
+	minor, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return ""
+	}
+	if major == 7 && minor < 4 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d", major, minor)
+}
+
 // stagingProjectName builds a Docker Compose project name from a snapshot ID.
 // It never slices the raw ID, so short or non-hex IDs cannot panic or produce
 // an invalid project name.
@@ -843,7 +891,7 @@ func (env *StagingEnv) detectVersions(restoreDir string) error {
 		env.WPVersion = "6.6.2"
 	}
 	if env.PHPVersion == "" {
-		env.PHPVersion = "8.2"
+		env.PHPVersion = "8.3"
 	}
 	env.DBImage = "mariadb"
 	env.DBTag = "10.11"

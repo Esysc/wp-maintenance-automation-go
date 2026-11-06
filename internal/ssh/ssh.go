@@ -43,6 +43,7 @@ type Client interface {
 	CommandExists(cmd string) (bool, error)
 	DetectWPRoot() (string, error)
 	GetWpVersion(wpRoot string) (string, error)
+	GetPHPVersion(wpRoot string) (string, error)
 	ParseDBConfig(wpRoot string) (string, string, string, string, error)
 	DownloadFile(remotePath, localPath string) error
 	UploadFile(localPath, remotePath string) error
@@ -325,6 +326,58 @@ func parseWpVersion(content string) string {
 			}
 			return line[start+1 : start+1+end]
 		}
+	}
+	return ""
+}
+
+// GetPHPVersion returns the PHP version used to run WordPress on the remote
+// host. WP-CLI is preferred because it uses the same interpreter as WordPress
+// upgrades; the system PHP CLI is used as a fallback.
+func (c *SSHClient) GetPHPVersion(wpRoot string) (string, error) {
+	var commands []string
+	if root := strings.TrimSpace(wpRoot); root != "" {
+		commands = append(commands, fmt.Sprintf(
+			"cd %s && wp eval 'echo PHP_VERSION;' --skip-plugins --skip-themes 2>/dev/null",
+			ShellQuote(root),
+		))
+	}
+	commands = append(commands,
+		"php -r 'echo PHP_VERSION;' 2>/dev/null",
+		"php -v 2>/dev/null",
+	)
+
+	var lastErr error
+	for _, cmd := range commands {
+		out, err := c.RunCommand(cmd)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if version := parsePHPVersion(out); version != "" {
+			return version, nil
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no PHP version was reported")
+	}
+	return "", fmt.Errorf("could not determine PHP version: %w", lastErr)
+}
+
+var phpVersionOutputRe = regexp.MustCompile(`(?i)\bPHP\s+v?(\d+\.\d+(?:\.\d+)?)`)
+var barePHPVersionRe = regexp.MustCompile(`^\s*v?(\d+\.\d+(?:\.\d+)?)\s*$`)
+
+func parsePHPVersion(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	if m := phpVersionOutputRe.FindStringSubmatch(output); len(m) == 2 {
+		return m[1]
+	}
+	firstLine := strings.TrimSpace(strings.SplitN(output, "\n", 2)[0])
+	if m := barePHPVersionRe.FindStringSubmatch(firstLine); len(m) == 2 {
+		return m[1]
 	}
 	return ""
 }

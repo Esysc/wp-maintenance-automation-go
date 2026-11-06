@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -240,6 +241,38 @@ func (db *Database) CountBackups() (int, error) {
 	var count int
 	err := db.QueryRow("SELECT COUNT(*) FROM backups").Scan(&count)
 	return count, err
+}
+
+func (db *Database) GetBackupByID(id string) (*Backup, error) {
+	query := `
+		SELECT id, site_id, timestamp, host, wp_root, wp_version, db_name, db_host, db_version, dump_file,
+		       file_count, rs_exclude, retention, ssh_host, ssh_user, ssh_port, backup_size, checksum, snapshot_id, created_at
+		FROM backups WHERE id = ?
+	`
+	backup := &Backup{}
+	err := db.QueryRow(query, id).Scan(
+		&backup.ID, &backup.SiteID, &backup.Timestamp, &backup.Host, &backup.WPRoot, &backup.WPVersion,
+		&backup.DBName, &backup.DBHost, &backup.DBVersion, &backup.DumpFile,
+		&backup.FileCount, &backup.RSExclude, &backup.Retention, &backup.SSHHost, &backup.SSHUser, &backup.SSHPort,
+		&backup.BackupSize, &backup.Checksum, &backup.SnapshotID, &backup.CreatedAt,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("backup not found")
+		}
+		return nil, err
+	}
+	return backup, nil
+}
+
+// DeleteBackupsBySnapshotID removes backup records that reference a restic
+// snapshot. Backup records store the short (8 character) snapshot ID.
+func (db *Database) DeleteBackupsBySnapshotID(snapshotID string) error {
+	if strings.TrimSpace(snapshotID) == "" {
+		return nil
+	}
+	_, err := db.Exec("DELETE FROM backups WHERE snapshot_id = ?", snapshotID)
+	return err
 }
 
 func (db *Database) CountSnapshots() (int, error) {

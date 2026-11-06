@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- The Snapshots page can now delete restic snapshots directly, and the new UI strings are translated into all supported languages.
+- Rehearsal staging now detects the production PHP major/minor version over SSH and mirrors it in the staging container.
+
+### Fixed
+- Rehearsal staging environments no longer fall back to PHP 8.2 when production runs a newer PHP version, preventing plugins that require PHP 8.3+ from fatally breaking WP-CLI. The staging image is now based on the official PHP Apache image so PHP 8.3+ can actually be installed.
+- Staging containers now receive `HTTP_X_FORWARDED_PROTO=https`, so production `wp-config.php` logic that reads that header works for both web requests and WP-CLI.
+- Rehearsal upgrade steps skip loading plugins and themes while updating, so one incompatible plugin cannot abort the whole stage before the healthcheck reports the real problem. A failed rehearsal healthcheck is now reported as a failure instead of being silently followed by a successful result.
+- Deleting a backup now also forgets its restic snapshot, so deleted backups no longer linger in the rehearsal snapshot picker.
+
 ## [0.5.3] - 2026-11-06
 
 ### Security

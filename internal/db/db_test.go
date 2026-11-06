@@ -250,6 +250,60 @@ func TestSiteSensitiveFieldsEncryptedAtRest(t *testing.T) {
 	}
 }
 
+func TestGetBackupByIDAndDeleteBySnapshot(t *testing.T) {
+	db := setupTestDB(t)
+
+	site := &Site{
+		ID:         "site-backup-lookup",
+		Name:       "Backup Lookup",
+		WPSSHHost:  "example.com",
+		WPSSHUser:  "ubuntu",
+		WPRoot:     "/var/www/html",
+		DBHost:     "localhost",
+		DBUser:     "wpuser",
+		DBPassword: "secret",
+		DBName:     "wordpress",
+	}
+	if err := db.CreateSite(site); err != nil {
+		t.Fatalf("failed to create site: %v", err)
+	}
+
+	backup := &Backup{
+		ID:         "backup-lookup-1",
+		SiteID:     site.ID,
+		Timestamp:  "2026-08-16T10:00:00Z",
+		Host:       "example.com",
+		WPRoot:     "/var/www/html",
+		SnapshotID: "abcdef12",
+	}
+	if err := db.CreateBackup(backup); err != nil {
+		t.Fatalf("failed to create backup: %v", err)
+	}
+
+	got, err := db.GetBackupByID(backup.ID)
+	if err != nil {
+		t.Fatalf("GetBackupByID() error = %v", err)
+	}
+	if got.SnapshotID != backup.SnapshotID || got.SiteID != site.ID {
+		t.Fatalf("GetBackupByID() = %#v, want snapshot %q for site %q", got, backup.SnapshotID, site.ID)
+	}
+
+	if _, err := db.GetBackupByID("missing"); err == nil {
+		t.Fatal("GetBackupByID(missing) error = nil, want error")
+	}
+
+	if err := db.DeleteBackupsBySnapshotID(backup.SnapshotID); err != nil {
+		t.Fatalf("DeleteBackupsBySnapshotID() error = %v", err)
+	}
+	backups, err := db.GetBackupsBySite(site.ID)
+	if err != nil {
+		t.Fatalf("failed to list backups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected snapshot-related backup to be removed, got %d", len(backups))
+	}
+}
+
 func TestDeleteSiteRemovesRelatedRows(t *testing.T) {
 	db := setupTestDB(t)
 

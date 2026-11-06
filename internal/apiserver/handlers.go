@@ -13,6 +13,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
@@ -578,6 +579,25 @@ func (s *APIServer) handleBackup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resticClientForSite returns the restic client that stores a site's snapshots.
+// Sites may override the repository; otherwise the server-wide client is used.
+func (s *APIServer) resticClientForSite(site *db.Site) (*restic.ResticClient, error) {
+	repository := ""
+	passwordFile := ""
+	if site != nil {
+		repository = site.ResticRepository
+		passwordFile = site.ResticPasswordFile
+	}
+	if repository == "" && s.Restic != nil {
+		repository = s.Restic.Repository
+		passwordFile = s.Restic.PasswordFile
+	}
+	if repository == "" {
+		return nil, fmt.Errorf("no restic repository configured")
+	}
+	return restic.NewClient(repository, passwordFile)
+}
+
 func (s *APIServer) handleBackupByID(w http.ResponseWriter, r *http.Request) {
 	backupID := strings.TrimPrefix(r.URL.Path, "/api/v1/backups/")
 
@@ -591,6 +611,37 @@ func (s *APIServer) handleBackupByID(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, http.StatusBadRequest, "backup id is required")
 			return
 		}
+
+		backup, err := s.Database.GetBackupByID(backupID)
+		if err != nil {
+			if err.Error() == "backup not found" {
+				apiErr(w, http.StatusNotFound, "backup not found")
+			} else {
+				apiErr(w, http.StatusInternalServerError, "failed to load backup")
+			}
+			return
+		}
+
+		// Remove the restic snapshot first. Deleting only the database row
+		// would leave an orphan snapshot that still appears in the rehearsal
+		// snapshot picker and keeps consuming repository space.
+		if strings.TrimSpace(backup.SnapshotID) != "" {
+			site, siteErr := s.Database.GetSite(backup.SiteID)
+			if siteErr != nil {
+				apiErr(w, http.StatusInternalServerError, "failed to load backup site")
+				return
+			}
+			resticClient, clientErr := s.resticClientForSite(site)
+			if clientErr != nil {
+				apiErr(w, http.StatusServiceUnavailable, "restic not configured")
+				return
+			}
+			if forgetErr := resticClient.Forget(backup.SnapshotID); forgetErr != nil {
+				apiErr(w, http.StatusInternalServerError, "failed to delete restic snapshot: "+forgetErr.Error())
+				return
+			}
+		}
+
 		if err := s.Database.DeleteBackup(backupID); err != nil {
 			apiErr(w, http.StatusInternalServerError, "failed to delete backup")
 			return
@@ -695,6 +746,40 @@ func (s *APIServer) handleSnapshotByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		apiErr(w, http.StatusNotFound, "snapshot not found")
+
+	case "DELETE":
+		snapshots, err := s.Restic.Snapshots()
+		if err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to get snapshots")
+			return
+		}
+
+		var target *restic.Snapshot
+		for i := range snapshots {
+			if snapshots[i].ID == snapshotID || snapshots[i].ShortID == snapshotID {
+				target = &snapshots[i]
+				break
+			}
+		}
+		if target == nil {
+			apiErr(w, http.StatusNotFound, "snapshot not found")
+			return
+		}
+
+		if err := s.Restic.Forget(target.ID); err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to delete restic snapshot: "+err.Error())
+			return
+		}
+
+		// Backups store the short ID, so remove records for both forms to
+		// avoid leaving rows that point at a snapshot that no longer exists.
+		for _, id := range []string{target.ShortID, target.ID} {
+			if err := s.Database.DeleteBackupsBySnapshotID(id); err != nil {
+				log.Printf("failed to delete backup records for snapshot %s: %v", id, err)
+			}
+		}
+
+		jsonResp(w, http.StatusOK, map[string]string{"message": "snapshot deleted"})
 
 	default:
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")

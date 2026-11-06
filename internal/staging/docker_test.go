@@ -99,3 +99,24 @@ define('DB_NAME', 'wordpress');
 		t.Fatalf("commented definition was removed:\n%s", got)
 	}
 }
+
+func TestNormalizePHPVersion(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "8.3.27", want: "8.3"},
+		{in: "PHP 8.2.35", want: "8.2"},
+		{in: " 8.4 ", want: "8.4"},
+		{in: "8", want: ""},
+		{in: "8.x", want: ""},
+		{in: "5.6.40", want: ""},
+		{in: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		if got := NormalizePHPVersion(tt.in); got != tt.want {
+			t.Errorf("NormalizePHPVersion(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

@@ -26,11 +26,14 @@ services:
       dockerfile: Dockerfile.wp
       args:
         WP_VERSION: ${WP_VERSION:-6.6.2}
-        WP_PHP_VERSION: ${WP_PHP_VERSION:-8.2}
+        WP_PHP_VERSION: ${WP_PHP_VERSION:-8.3}
     depends_on:
       db:
         condition: service_healthy
     environment:
+      # Production wp-config.php files often derive HTTPS from this header.
+      # Set it for both Apache and WP-CLI so the staging copy behaves the same.
+      HTTP_X_FORWARDED_PROTO: https
       WORDPRESS_DB_HOST: db:3306
       WORDPRESS_DB_USER: ${DB_USER:-wpuser}
       WORDPRESS_DB_PASSWORD: ${DB_PASS:-wppass}

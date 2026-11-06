@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-06
+
 ### Added
 - The Snapshots page can now delete restic snapshots directly, and the new UI strings are translated into all supported languages.
 - Rehearsal staging now detects the production PHP major/minor version over SSH and mirrors it in the staging container.

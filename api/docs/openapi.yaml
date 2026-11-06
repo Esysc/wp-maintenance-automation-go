@@ -18,7 +18,7 @@ info:
     - At least one digit
 
     This will create the internal admin user and return a 24-hour valid token.
-  version: 0.5.3
+  version: 0.6.0
   contact:
     name: WP Maintenance Automation
     url: https://github.com/andreacristalli/wp-maintenance-automation-go

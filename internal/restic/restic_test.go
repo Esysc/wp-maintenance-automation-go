@@ -12,31 +12,44 @@ func TestBuildTagArgs(t *testing.T) {
 		name       string
 		snapshotID string
 		addTags    []string
+		removeTags []string
 		want       []string
 	}{
 		{
-			name:       "joins non-empty tags into set flag",
+			name:       "adds each non-empty tag",
 			snapshotID: "snapshot-123",
 			addTags:    []string{"daily", "prod"},
-			want:       []string{"tag", "--set=daily,prod", "snapshot-123"},
+			want:       []string{"tag", "--add=daily", "--add=prod", "snapshot-123"},
 		},
 		{
-			name:       "skips empty tags",
+			name:       "skips empty add tags",
 			snapshotID: "snapshot-123",
 			addTags:    []string{"", "daily", "", "prod"},
-			want:       []string{"tag", "--set=daily,prod", "snapshot-123"},
+			want:       []string{"tag", "--add=daily", "--add=prod", "snapshot-123"},
 		},
 		{
-			name:       "allows empty set",
+			name:       "removes each non-empty tag",
 			snapshotID: "snapshot-123",
-			addTags:    nil,
+			removeTags: []string{"stale", "old"},
+			want:       []string{"tag", "--remove=stale", "--remove=old", "snapshot-123"},
+		},
+		{
+			name:       "supports adding and removing together",
+			snapshotID: "snapshot-123",
+			addTags:    []string{"daily"},
+			removeTags: []string{"stale"},
+			want:       []string{"tag", "--add=daily", "--remove=stale", "snapshot-123"},
+		},
+		{
+			name:       "allows no tag changes",
+			snapshotID: "snapshot-123",
 			want:       []string{"tag", "snapshot-123"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildTagArgs(tt.snapshotID, tt.addTags)
+			got := buildTagArgs(tt.snapshotID, tt.addTags, tt.removeTags)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Fatalf("buildTagArgs() = %v, want %v", got, tt.want)
 			}

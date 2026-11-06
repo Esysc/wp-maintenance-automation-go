@@ -10,6 +10,7 @@ import (
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
 )
 
 type CLIClient struct {
@@ -117,7 +118,7 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Print(`WP Maintenance Automation CLI v1.0.0
+	fmt.Printf(`WP Maintenance Automation CLI v%s
 
 Usage:
   wp-maintenance <command> [options]
@@ -149,8 +150,8 @@ Environment:
   API_URL              API server URL (default: http://localhost:8081)
   WP_MAINTENANCE_TOKEN  API token for authentication
   DATA_DIR              Data directory (default: ./data)
-  SECRET_KEY            Signing key (default: default-secret-key)
-`)
+  SECRET_KEY            Optional encryption key (auto-generated in DATA_DIR if unset)
+`, version.Version)
 }
 
 func cmdBackup(client *CLIClient, args []string) {

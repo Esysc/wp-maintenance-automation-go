@@ -33,8 +33,9 @@ go.work
 # Backup artifacts
 backup_artifacts/
 
-# Restore artifacts
-restore/
+# Restore artifacts (anchored to the repository root so source packages such
+# as internal/restore are not accidentally ignored)
+/restore/
 
 # Data directories
 data/

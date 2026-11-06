@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
 )
 
 type profileUser struct {
@@ -55,6 +57,15 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+type contextKey string
+
+const authenticatedUserKey contextKey = "authenticated_user"
+
+func userFromContext(ctx context.Context) (*auth.User, bool) {
+	user, ok := ctx.Value(authenticatedUserKey).(*auth.User)
+	return user, ok && user != nil
+}
+
 func (s *APIServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.Header.Get("Authorization")
@@ -90,14 +101,15 @@ func (s *APIServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r)
+		ctx := context.WithValue(r.Context(), authenticatedUserKey, user)
+		next(w, r.WithContext(ctx))
 	}
 }
 
 func (s *APIServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, http.StatusOK, map[string]interface{}{
 		"status":  "ok",
-		"version": "1.0.0",
+		"version": version.Version,
 		"time":    time.Now().Format(time.RFC3339),
 	})
 }
@@ -265,6 +277,12 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	user, ok := userFromContext(r.Context())
+	if !ok {
+		apiErr(w, http.StatusUnauthorized, "missing authorization")
+		return
+	}
+
 	var req struct {
 		UserID          string `json:"user_id"`
 		CurrentPassword string `json:"current_password"`
@@ -275,12 +293,19 @@ func (s *APIServer) handleChangePassword(w http.ResponseWriter, r *http.Request)
 		apiErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.UserID == "" || req.NewPassword == "" || req.CurrentPassword == "" {
-		apiErr(w, http.StatusBadRequest, "user_id, current_password and new_password are required")
+	if req.NewPassword == "" || req.CurrentPassword == "" {
+		apiErr(w, http.StatusBadRequest, "current_password and new_password are required")
+		return
+	}
+	// Never trust the user ID from the request body: always change the
+	// authenticated user's password, and reject attempts to target another
+	// account outright.
+	if req.UserID != "" && req.UserID != user.ID {
+		apiErr(w, http.StatusForbidden, "cannot change another user's password")
 		return
 	}
 
-	if err := s.Auth.ChangePasswordWithCurrent(req.UserID, req.CurrentPassword, req.NewPassword); err != nil {
+	if err := s.Auth.ChangePasswordWithCurrent(user.ID, req.CurrentPassword, req.NewPassword); err != nil {
 		if errors.Is(err, auth.ErrInvalidCurrentPass) {
 			apiErr(w, http.StatusUnauthorized, "invalid current password")
 			return

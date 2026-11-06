@@ -97,6 +97,9 @@ func tryParseSnapshot(output string, tags []string) *Snapshot {
 	if err := json.Unmarshal([]byte(lastLine), &backupResult); err != nil {
 		return nil
 	}
+	if backupResult.SnapshotID == "" {
+		return nil
+	}
 
 	shortID := backupResult.SnapshotID
 	if len(shortID) > 8 {
@@ -238,25 +241,26 @@ func (r *ResticClient) Find(path string, tags []string) ([]Snapshot, error) {
 	return snapshots, nil
 }
 
-func buildTagArgs(snapshotID string, addTags []string) []string {
+func buildTagArgs(snapshotID string, addTags []string, removeTags []string) []string {
 	args := []string{"tag"}
 
-	var tags []string
 	for _, tag := range addTags {
 		if tag != "" {
-			tags = append(tags, tag)
+			args = append(args, fmt.Sprintf("--add=%s", tag))
 		}
 	}
 
-	if len(tags) > 0 {
-		args = append(args, fmt.Sprintf("--set=%s", strings.Join(tags, ",")))
+	for _, tag := range removeTags {
+		if tag != "" {
+			args = append(args, fmt.Sprintf("--remove=%s", tag))
+		}
 	}
 
 	return append(args, snapshotID)
 }
 
 func (r *ResticClient) Tag(snapshotID string, addTags []string, removeTags []string) error {
-	args := buildTagArgs(snapshotID, addTags)
+	args := buildTagArgs(snapshotID, addTags, removeTags)
 
 	cmd := r.newCmd(args...)
 	cmd.Env = os.Environ()

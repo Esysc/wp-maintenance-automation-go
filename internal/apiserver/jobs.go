@@ -1,8 +1,10 @@
 package apiserver
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net"
@@ -402,12 +404,9 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "job_progress_backup_dumping_database", 45)
-		shellQuote := func(value string) string {
-			return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
-		}
 		remoteCredFile := "/tmp/wpma-mysqldump-" + timestamp + ".cnf"
 		defer sshClient.RemoveRemoteFile(remoteCredFile)
-		remoteCredContent := fmt.Sprintf("[client]\nuser=%s\npassword=%s\nhost=%s\n", dbUser, dbPassword, dbHost)
+		remoteCredContent := mysqlOptionFileContent(dbUser, dbPassword, dbHost)
 		if _, err := sshClient.RunCommand(fmt.Sprintf("umask 077 && cat > %s << 'EOF'\n%sEOF", shellQuote(remoteCredFile), remoteCredContent)); err != nil {
 			cleanupRemoveAll(workDir)
 			setError("failed to prepare database credentials: " + err.Error())
@@ -588,21 +587,12 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 		if tuple.req.ApplyDB {
 			setStatus("running", "job_progress_restore_restoring_database", 55)
-			var dbDump string
-			filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-				if info != nil && !info.IsDir() && strings.HasSuffix(path, ".sql") {
-					dbDump = path
-					return fmt.Errorf("found")
-				}
-				return nil
+			dbDump := findFirstFile(restoreDir, func(path string, _ fs.DirEntry) bool {
+				return strings.HasSuffix(path, ".sql")
 			})
 			if dbDump == "" {
-				filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-					if info != nil && !info.IsDir() && strings.HasSuffix(path, ".sql.gz") {
-						dbDump = path
-						return fmt.Errorf("found")
-					}
-					return nil
+				dbDump = findFirstFile(restoreDir, func(path string, _ fs.DirEntry) bool {
+					return strings.HasSuffix(path, ".sql.gz")
 				})
 			}
 			if dbDump == "" {
@@ -619,9 +609,27 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 				dbHost = "localhost"
 			}
 
-			remoteDump := "/tmp/wp-restore-" + tuple.req.SnapshotID + ".sql"
-			if strings.HasSuffix(dbDump, ".gz") {
-				remoteDump += ".gz"
+			remoteBase := fmt.Sprintf("/tmp/wpma-restore-%d", time.Now().UnixNano())
+			remoteDump := remoteBase + ".sql"
+			remoteCredFile := remoteBase + ".cnf"
+			defer sshClient.RemoveRemoteFile(remoteCredFile)
+			defer sshClient.RemoveRemoteFile(remoteDump)
+
+			// Decompress locally so the remote import does not depend on a
+			// shell pipeline (whose left-hand side failure is otherwise
+			// silently ignored by POSIX shells).
+			if strings.HasSuffix(dbDump, ".sql.gz") {
+				plainDump, err := decompressGzipToTempFile(dbDump, restoreDir)
+				if err != nil {
+					setError("failed to decompress db dump: " + err.Error())
+					return
+				}
+				dbDump = plainDump
+			}
+
+			if _, err := sshClient.RunCommand(fmt.Sprintf("umask 077 && cat > %s << 'EOF'\n%sEOF", shellQuote(remoteCredFile), mysqlOptionFileContent(dbUser, dbPassword, dbHost))); err != nil {
+				setError("failed to prepare database credentials: " + err.Error())
+				return
 			}
 
 			if err := sshClient.UploadFile(dbDump, remoteDump); err != nil {
@@ -629,14 +637,9 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 				return
 			}
 
-			var importCmd string
-			if strings.HasSuffix(dbDump, ".gz") {
-				importCmd = fmt.Sprintf("gunzip -c %s | mysql -u%s -p'%s' -h%s %s && rm -f %s",
-					remoteDump, dbUser, dbPassword, dbHost, dbName, remoteDump)
-			} else {
-				importCmd = fmt.Sprintf("mysql -u%s -p'%s' -h%s %s < %s && rm -f %s",
-					dbUser, dbPassword, dbHost, dbName, remoteDump, remoteDump)
-			}
+			mysqlCmd := fmt.Sprintf("mysql --defaults-extra-file=%s %s", shellQuote(remoteCredFile), shellQuote(dbName))
+			importCmd := fmt.Sprintf("%s < %s && rm -f %s",
+				mysqlCmd, shellQuote(remoteDump), shellQuote(remoteDump))
 			if _, err := sshClient.RunCommand(importCmd); err != nil {
 				setError("database restore failed: " + err.Error())
 				return
@@ -650,13 +653,8 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 		if tuple.req.ApplyFiles {
 			setStatus("running", "job_progress_restore_restoring_files", 75)
-			var wpDir string
-			filepath.Walk(restoreDir, func(path string, info os.FileInfo, _ error) error {
-				if info != nil && info.IsDir() && (info.Name() == "wp" || info.Name() == "wordpress" || info.Name() == "html") {
-					wpDir = path
-					return fmt.Errorf("found")
-				}
-				return nil
+			wpDir := findFirstDir(restoreDir, func(name string) bool {
+				return name == "wp" || name == "wordpress" || name == "html"
 			})
 			if wpDir == "" {
 				wpDir = restoreDir
@@ -993,4 +991,89 @@ func (s *APIServer) handleJobByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
+}
+
+func shellQuote(value string) string {
+	return ssh.ShellQuote(value)
+}
+
+// mysqlOptionFileContent renders a MySQL client option file. Values are
+// quoted and escaped so credentials containing spaces or quotes cannot break
+// the file's syntax.
+func mysqlOptionFileContent(user, password, host string) string {
+	return fmt.Sprintf("[client]\nuser=%s\npassword=%s\nhost=%s\n",
+		quoteMySQLOption(user), quoteMySQLOption(password), quoteMySQLOption(host))
+}
+
+func quoteMySQLOption(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`"`, `\"`,
+		"\n", `\n`,
+		"\r", `\r`,
+		"\t", `\t`,
+	)
+	return `"` + replacer.Replace(value) + `"`
+}
+
+func findFirstFile(root string, match func(path string, d fs.DirEntry) bool) string {
+	found := ""
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || d.IsDir() {
+			return nil
+		}
+		if match(path, d) {
+			found = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+func findFirstDir(root string, match func(name string) bool) string {
+	found := ""
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d == nil || !d.IsDir() || path == root {
+			return nil
+		}
+		if match(d.Name()) {
+			found = path
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
+}
+
+// decompressGzipToTempFile expands src into a temporary file inside dir and
+// returns its path. The caller is responsible for removing the file.
+func decompressGzipToTempFile(src, dir string) (string, error) {
+	f, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return "", err
+	}
+	defer gz.Close()
+
+	out, err := os.CreateTemp(dir, "wpma-import-*.sql")
+	if err != nil {
+		return "", err
+	}
+
+	if _, err := io.Copy(out, gz); err != nil {
+		out.Close()
+		os.Remove(out.Name())
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(out.Name())
+		return "", err
+	}
+	return out.Name(), nil
 }

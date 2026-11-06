@@ -40,7 +40,9 @@ func LoadConfig(configPath string) (*Config, error) {
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return NewDefaultConfig(), nil
+			cfg := NewDefaultConfig()
+			GlobalConfig = cfg
+			return cfg, nil
 		}
 		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
@@ -67,7 +69,15 @@ func SaveConfig(config *Config, configPath string) error {
 		return fmt.Errorf("failed to create config directory: %w", err)
 	}
 
-	return os.WriteFile(configPath, data, 0644)
+	// The config contains secrets (admin password, secret key), so keep it
+	// readable only by the owner. Chmod also fixes existing 0644 files.
+	if err := os.WriteFile(configPath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+	if err := os.Chmod(configPath, 0600); err != nil {
+		return fmt.Errorf("failed to set config file permissions: %w", err)
+	}
+	return nil
 }
 
 // NewDefaultConfig creates a default configuration

@@ -744,3 +744,28 @@ func loginTestAdmin(t *testing.T, s *APIServer) string {
 	json.Unmarshal(rr.Body.Bytes(), &result)
 	return result["data"].(map[string]interface{})["token"].(string)
 }
+
+func TestHandleChangePasswordRejectsAnotherUser(t *testing.T) {
+	s := setupTestAPIServer(t)
+	adminToken := loginTestAdmin(t, s)
+
+	reqBody := map[string]string{
+		"user_id":          "another-user",
+		"current_password": "AdminPass123",
+		"new_password":     "Newpassword123",
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest("POST", "/api/v1/auth/change-password", bytes.NewBuffer(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+adminToken)
+
+	rr := httptest.NewRecorder()
+	s.authMiddleware(s.handleChangePassword)(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("Expected status 403, got %d. Body: %s", rr.Code, rr.Body.String())
+	}
+
+	// The authenticated user's password must remain unchanged.
+	loginTestAdmin(t, s)
+}

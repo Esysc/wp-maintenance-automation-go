@@ -69,6 +69,41 @@ func TestLoadConfigNotFound(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected default config for missing file")
 	}
+
+	if GlobalConfig != cfg {
+		t.Fatal("expected LoadConfig to publish the default config as GlobalConfig")
+	}
+}
+
+func TestSaveConfigUsesOwnerOnlyPermissions(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+
+	if err := SaveConfig(NewDefaultConfig(), configPath); err != nil {
+		t.Fatalf("failed to save config: %v", err)
+	}
+
+	info, err := os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("failed to stat config: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("new config permissions = %o, want 0600", perm)
+	}
+
+	// Tighten an existing world-readable config as well.
+	if err := os.Chmod(configPath, 0644); err != nil {
+		t.Fatalf("failed to chmod config: %v", err)
+	}
+	if err := SaveConfig(NewDefaultConfig(), configPath); err != nil {
+		t.Fatalf("failed to re-save config: %v", err)
+	}
+	info, err = os.Stat(configPath)
+	if err != nil {
+		t.Fatalf("failed to stat config: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Fatalf("existing config permissions = %o, want 0600", perm)
+	}
 }
 
 func TestValidateConfig(t *testing.T) {

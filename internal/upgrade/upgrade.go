@@ -369,7 +369,7 @@ func (um *UpgradeManager) wpCLI(args string) (string, error) {
 		wpExtra = " " + um.wpCLIExtraArgs
 	}
 
-	cmd := fmt.Sprintf("cd '%s' && %s%s %s", um.wpRoot, wpBinary, wpExtra, args)
+	cmd := fmt.Sprintf("cd %s && %s%s %s", ssh.ShellQuote(um.wpRoot), ssh.ShellQuote(wpBinary), wpExtra, args)
 	return um.sshClient.RunCommand(cmd)
 }
 
@@ -394,7 +394,8 @@ Reason: %s
 }
 
 func (um *UpgradeManager) RunRollback(snapshotID string) error {
-	output, err := um.wpCLI(fmt.Sprintf("db export - | gzip > /tmp/rollback_before_%s.sql.gz", snapshotID))
+	rollbackPath := "/tmp/rollback_before_" + snapshotID + ".sql.gz"
+	output, err := um.wpCLI(fmt.Sprintf("db export - | gzip > %s", ssh.ShellQuote(rollbackPath)))
 	if err != nil {
 		return fmt.Errorf("failed to snapshot database before rollback: %w", err)
 	}

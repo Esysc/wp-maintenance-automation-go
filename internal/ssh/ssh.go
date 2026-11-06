@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -255,7 +256,7 @@ func (c *SSHClient) RunCommandWithEnv(cmd string, env []string) (string, error) 
 }
 
 func (c *SSHClient) FileExists(remotePath string) (bool, error) {
-	output, err := c.RunCommand(fmt.Sprintf("test -f '%s' && echo 'exists'", remotePath))
+	output, err := c.RunCommand(fmt.Sprintf("test -f %s && echo 'exists'", ShellQuote(remotePath)))
 	if err != nil {
 		return false, nil
 	}
@@ -271,22 +272,22 @@ func (c *SSHClient) CommandExists(cmd string) (bool, error) {
 }
 
 func (c *SSHClient) ReadRemoteFile(remotePath string) (string, error) {
-	return c.RunCommand(fmt.Sprintf("cat '%s'", remotePath))
+	return c.RunCommand(fmt.Sprintf("cat %s", ShellQuote(remotePath)))
 }
 
 func (c *SSHClient) WriteRemoteFile(remotePath, content string) error {
-	cmd := fmt.Sprintf("cat > '%s' << 'EOF'\n%s\nEOF", remotePath, content)
+	cmd := fmt.Sprintf("cat > %s << 'EOF'\n%s\nEOF", ShellQuote(remotePath), content)
 	_, err := c.RunCommand(cmd)
 	return err
 }
 
 func (c *SSHClient) RemoveRemoteFile(remotePath string) error {
-	_, err := c.RunCommand(fmt.Sprintf("rm -f '%s'", remotePath))
+	_, err := c.RunCommand(fmt.Sprintf("rm -f %s", ShellQuote(remotePath)))
 	return err
 }
 
 func (c *SSHClient) WPCLI(wpRoot, args string) (string, error) {
-	return c.RunCommand(fmt.Sprintf("cd '%s' && %s %s", wpRoot, "wp", args))
+	return c.RunCommand(fmt.Sprintf("cd %s && %s %s", ShellQuote(wpRoot), "wp", args))
 }
 
 func (c *SSHClient) GetWpVersion(wpRoot string) (string, error) {
@@ -468,27 +469,76 @@ func (c *SSHClient) SyncDir(sourceDir, destDir string, sourceIsRemote bool, excl
 		return err
 	}
 
-	excludeSet := make(map[string]bool)
-	for _, e := range excludes {
-		if e != "" {
-			excludeSet[e] = true
-		}
-	}
-
-	isExcluded := func(name string) bool {
-		base := filepath.Base(name)
-		for e := range excludeSet {
-			if matched, _ := filepath.Match(e, base); matched {
-				return true
-			}
-		}
-		return false
-	}
+	isExcluded := newExcludeMatcher(excludes)
 
 	if sourceIsRemote {
 		return c.downloadTar(sourceDir, destDir, isExcluded, onFile)
 	}
 	return c.uploadTar(sourceDir, destDir, isExcluded, delete, onFile)
+}
+
+// newExcludeMatcher matches rsync-style exclude patterns against a path
+// relative to the sync root. Patterns containing a slash are matched against
+// the full relative path; bare patterns are also matched against the basename.
+// A matched directory excludes everything below it.
+func newExcludeMatcher(excludes []string) func(string) bool {
+	var patterns []string
+	for _, e := range excludes {
+		e = strings.TrimSpace(filepath.ToSlash(e))
+		e = strings.TrimPrefix(e, "./")
+		e = strings.TrimSuffix(e, "/")
+		if e != "" {
+			patterns = append(patterns, e)
+		}
+	}
+
+	return func(name string) bool {
+		name = strings.TrimPrefix(filepath.ToSlash(name), "./")
+		name = strings.TrimSuffix(name, "/")
+		if name == "" || name == "." {
+			return false
+		}
+		for _, pattern := range patterns {
+			if name == pattern || strings.HasPrefix(name, pattern+"/") {
+				return true
+			}
+			if strings.Contains(pattern, "/") {
+				if matched, _ := path.Match(pattern, name); matched {
+					return true
+				}
+				continue
+			}
+			if matched, _ := path.Match(pattern, path.Base(name)); matched {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// secureArchivePath joins an archive entry name to root and rejects entries
+// that would escape root (absolute paths or ".." traversal).
+func secureArchivePath(root, name string) (string, error) {
+	cleaned := filepath.Clean(filepath.FromSlash(name))
+	if cleaned == "." {
+		return filepath.Clean(root), nil
+	}
+	if filepath.IsAbs(cleaned) {
+		return "", fmt.Errorf("archive entry has an absolute path")
+	}
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry escapes the destination")
+	}
+
+	target := filepath.Join(root, cleaned)
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return "", err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry escapes the destination")
+	}
+	return target, nil
 }
 
 func (c *SSHClient) downloadTar(sourceDir, destDir string, isExcluded func(string) bool, onFile func(string)) error {
@@ -523,7 +573,7 @@ func (c *SSHClient) downloadTar(sourceDir, destDir string, isExcluded func(strin
 			return fmt.Errorf("tar read error: %w", err)
 		}
 
-		name := filepath.Clean(header.Name)
+		name := filepath.ToSlash(filepath.Clean(header.Name))
 		if name == "." {
 			continue
 		}
@@ -531,11 +581,14 @@ func (c *SSHClient) downloadTar(sourceDir, destDir string, isExcluded func(strin
 			continue
 		}
 
+		target, err := secureArchivePath(destDir, name)
+		if err != nil {
+			return fmt.Errorf("unsafe tar entry %q: %w", header.Name, err)
+		}
+
 		if onFile != nil {
 			onFile(name)
 		}
-
-		target := filepath.Join(destDir, name)
 
 		switch header.Typeflag {
 		case tar.TypeDir:
@@ -607,7 +660,11 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		if relPath == "." {
 			return nil
 		}
-		if isExcluded(relPath) {
+		// Archive names and remote listings always use forward slashes.
+		// Keep sentFiles keyed the same way so the delete pass behaves on
+		// Windows as well as on Unix.
+		archivePath := filepath.ToSlash(relPath)
+		if isExcluded(archivePath) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -615,7 +672,7 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		}
 
 		if onFile != nil {
-			onFile(relPath)
+			onFile(archivePath)
 		}
 
 		info, err := os.Stat(path)
@@ -627,14 +684,14 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		if err != nil {
 			return err
 		}
-		header.Name = relPath
+		header.Name = archivePath
 
 		if info.IsDir() {
 			header.Name += "/"
 			return tw.WriteHeader(header)
 		}
 
-		sentFiles[relPath] = struct{}{}
+		sentFiles[archivePath] = struct{}{}
 
 		if err := tw.WriteHeader(header); err != nil {
 			return err
@@ -643,9 +700,12 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		_, err = io.Copy(tw, f)
-		return err
+		_, copyErr := io.Copy(tw, f)
+		closeErr := f.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
 	})
 	if err != nil {
 		return err
@@ -664,8 +724,14 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 
 	if delete && remoteFiles != nil {
 		for f := range remoteFiles {
+			// Mirror rsync's --delete semantics: excluded paths are left
+			// untouched instead of being deleted just because they were not
+			// uploaded.
+			if isExcluded(f) {
+				continue
+			}
 			if _, sent := sentFiles[f]; !sent {
-				c.RunCommand(fmt.Sprintf("rm -f %s", shellQuote(filepath.Join(destDir, f))))
+				c.RunCommand(fmt.Sprintf("rm -f %s", shellQuote(path.Join(destDir, f))))
 			}
 		}
 		c.RunCommand(fmt.Sprintf("find %s -type d -empty -delete 2>/dev/null || true", shellQuote(destDir)))
@@ -674,8 +740,13 @@ func (c *SSHClient) uploadTar(sourceDir, destDir string, isExcluded func(string)
 	return nil
 }
 
-func shellQuote(s string) string {
+// ShellQuote quotes a value for safe use as a single shell argument.
+func ShellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func shellQuote(s string) string {
+	return ShellQuote(s)
 }
 
 func isLocalPath(p string) bool {

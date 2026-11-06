@@ -1,6 +1,9 @@
 package ssh
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 func TestParseDefineValue(t *testing.T) {
 	cases := []struct {
@@ -79,5 +82,76 @@ func TestIsLocalPath(t *testing.T) {
 	}
 	if isLocalPath("not-a-path") {
 		t.Fatalf("bare token must not be treated as a local path")
+	}
+}
+
+func TestNewExcludeMatcher(t *testing.T) {
+	isExcluded := newExcludeMatcher([]string{
+		".git",
+		"*.log",
+		"wp-content/cache",
+		"./uploads",
+		"vendor/",
+	})
+
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{".git", true},
+		{".git/config", true},
+		{"debug.log", true},
+		{"logs/debug.log", true},
+		{"wp-content/cache/page.html", true},
+		{"wp-content/themes/theme/style.css", false},
+		{"uploads/2024/image.jpg", true},
+		{"vendor/package/file.go", true},
+		{"index.php", false},
+	}
+
+	for _, c := range cases {
+		if got := isExcluded(c.name); got != c.want {
+			t.Errorf("isExcluded(%q) = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestSecureArchivePath(t *testing.T) {
+	root := t.TempDir()
+
+	tests := []struct {
+		name    string
+		entry   string
+		wantRel string
+		wantErr bool
+	}{
+		{name: "root entry", entry: ".", wantRel: "."},
+		{name: "nested file", entry: "wp/index.php", wantRel: "wp/index.php"},
+		{name: "dot segments normalize", entry: "wp/./a/../b.txt", wantRel: "wp/b.txt"},
+		{name: "parent traversal", entry: "../escape.txt", wantErr: true},
+		{name: "nested parent traversal", entry: "wp/../../escape.txt", wantErr: true},
+		{name: "absolute path", entry: "/etc/passwd", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := secureArchivePath(root, tt.entry)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("secureArchivePath(%q) = %q, want error", tt.entry, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("secureArchivePath(%q) error = %v", tt.entry, err)
+			}
+			rel, err := filepath.Rel(root, got)
+			if err != nil {
+				t.Fatalf("filepath.Rel: %v", err)
+			}
+			if filepath.ToSlash(rel) != tt.wantRel {
+				t.Fatalf("secureArchivePath(%q) rel = %q, want %q", tt.entry, rel, tt.wantRel)
+			}
+		})
 	}
 }

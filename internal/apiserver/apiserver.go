@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"log"
@@ -50,6 +51,45 @@ func sandboxDataDir() string {
 	return "./sandbox-data"
 }
 
+// ensureEncryptionKey makes sure DATA_ENCRYPTION_KEY is set before the database
+// is opened. An explicitly configured key always wins; otherwise a generated
+// key is persisted with owner-only permissions so restarts can still decrypt
+// stored credentials.
+func ensureEncryptionKey(dataDir string) error {
+	if strings.TrimSpace(os.Getenv("DATA_ENCRYPTION_KEY")) != "" || strings.TrimSpace(os.Getenv("SECRET_KEY")) != "" {
+		return nil
+	}
+
+	keyPath := filepath.Join(dataDir, "encryption.key")
+	if data, err := os.ReadFile(keyPath); err == nil {
+		key := strings.TrimSpace(string(data))
+		if key != "" {
+			return os.Setenv("DATA_ENCRYPTION_KEY", key)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to read encryption key: %w", err)
+	}
+
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Errorf("failed to generate encryption key: %w", err)
+	}
+	key := hex.EncodeToString(b)
+
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
+	}
+	if err := os.WriteFile(keyPath, []byte(key), 0600); err != nil {
+		return fmt.Errorf("failed to write encryption key: %w", err)
+	}
+	if err := os.Chmod(keyPath, 0600); err != nil {
+		return fmt.Errorf("failed to secure encryption key: %w", err)
+	}
+
+	log.Printf("DATA_ENCRYPTION_KEY/SECRET_KEY not set; generated persistent encryption key at %s", keyPath)
+	return os.Setenv("DATA_ENCRYPTION_KEY", key)
+}
+
 // newSSHClient returns a client for the given SSH options, using the
 // injectable factory when set (used by tests) and the real SSH client by
 // default.
@@ -69,15 +109,22 @@ func Run() {
 		port = "8081"
 	}
 
+	dataDir := os.Getenv("DATA_DIR")
+	if dataDir == "" {
+		dataDir = "./data"
+	}
+
+	// Encryption keys must not fall back to a publicly known constant in
+	// production. If no key is supplied, persist a generated one next to the
+	// database so encrypted credentials survive restarts.
+	if err := ensureEncryptionKey(dataDir); err != nil {
+		log.Fatalf("Failed to initialize encryption key: %v", err)
+	}
+
 	connStr := buildDBConnStr()
 	database, err := db.New(connStr)
 	if err != nil {
 		log.Fatalf("Failed to create database: %v", err)
-	}
-
-	dataDir := os.Getenv("DATA_DIR")
-	if dataDir == "" {
-		dataDir = "./data"
 	}
 
 	secretKey := os.Getenv("SECRET_KEY")

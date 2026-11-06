@@ -62,16 +62,23 @@ func CheckStagingHealth(opts *HealthcheckOptions) (*HealthcheckResult, error) {
 		},
 	}
 
+	attempts := opts.MaxRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+
 	var lastErr error
-	for attempt := 1; attempt <= opts.MaxRetries; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		resp, err := client.Get(opts.URL)
 		if err != nil {
 			lastErr = err
-			if attempt < opts.MaxRetries {
+			if attempt < attempts {
 				time.Sleep(opts.Delay)
 			}
 			continue
 		}
+		// Drain a bounded amount of the body so the connection can be reused.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
 
 		if resp.StatusCode == opts.ExpectedCode {
@@ -84,15 +91,15 @@ func CheckStagingHealth(opts *HealthcheckOptions) (*HealthcheckResult, error) {
 		}
 
 		lastErr = fmt.Errorf("unexpected status code %d (expected %d)", resp.StatusCode, opts.ExpectedCode)
-		if attempt < opts.MaxRetries {
+		if attempt < attempts {
 			time.Sleep(opts.Delay)
 		}
 	}
 
 	return &HealthcheckResult{
 		Passed:  false,
-		Attempt: opts.MaxRetries,
-		Message: fmt.Sprintf("healthcheck failed after %d attempts: %v", opts.MaxRetries, lastErr),
+		Attempt: attempts,
+		Message: fmt.Sprintf("healthcheck failed after %d attempts: %v", attempts, lastErr),
 	}, lastErr
 }
 

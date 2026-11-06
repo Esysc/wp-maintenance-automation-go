@@ -509,3 +509,27 @@ func TestNewMigratesJobsProgressPercentColumn(t *testing.T) {
 		t.Fatalf("expected jobs table to include progress_percent column after migration")
 	}
 }
+
+func TestDecryptSensitiveFallsBackToLegacyKey(t *testing.T) {
+	t.Setenv("DATA_ENCRYPTION_KEY", "")
+	t.Setenv("SECRET_KEY", "")
+
+	// Values written before an encryption key was configured used the legacy
+	// key. They must remain readable after a key is introduced.
+	legacyCiphertext, err := encryptSensitive("legacy-secret")
+	if err != nil {
+		t.Fatalf("failed to encrypt with legacy key: %v", err)
+	}
+
+	if err := os.Setenv("DATA_ENCRYPTION_KEY", "new-production-key"); err != nil {
+		t.Fatalf("failed to set encryption key: %v", err)
+	}
+
+	plain, err := decryptSensitive(legacyCiphertext)
+	if err != nil {
+		t.Fatalf("failed to decrypt legacy value with fallback: %v", err)
+	}
+	if plain != "legacy-secret" {
+		t.Fatalf("decrypted legacy value = %q", plain)
+	}
+}

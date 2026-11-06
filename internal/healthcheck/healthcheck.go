@@ -48,13 +48,18 @@ func (c *Checker) Check(opts *DefaultOptions) (map[string]interface{}, error) {
 		return nil, fmt.Errorf("healthcheck URL is required")
 	}
 
+	attempts := opts.MaxRetries
+	if attempts < 1 {
+		attempts = 1
+	}
+
 	var lastError error
 
-	for attempt := 1; attempt <= opts.MaxRetries; attempt++ {
+	for attempt := 1; attempt <= attempts; attempt++ {
 		result, err := c.checkOnce(context.Background(), opts)
 		if err != nil {
 			lastError = err
-			if attempt < opts.MaxRetries {
+			if attempt < attempts {
 				time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
 			}
 			continue
@@ -63,7 +68,7 @@ func (c *Checker) Check(opts *DefaultOptions) (map[string]interface{}, error) {
 		return result, nil
 	}
 
-	return nil, fmt.Errorf("healthcheck failed after %d attempts: %v", opts.MaxRetries, lastError)
+	return nil, fmt.Errorf("healthcheck failed after %d attempts: %v", attempts, lastError)
 }
 
 func (c *Checker) checkOnce(ctx context.Context, opts *DefaultOptions) (map[string]interface{}, error) {
@@ -72,22 +77,17 @@ func (c *Checker) checkOnce(ctx context.Context, opts *DefaultOptions) (map[stri
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	if opts.Insecure {
-		c.client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		}
-	} else {
-		c.client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: false,
-			},
-		}
+	// Clone the shared client and use a per-check transport. Mutating the
+	// shared client here would race when checks run concurrently.
+	client := *c.client
+	client.Transport = &http.Transport{
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: opts.Insecure,
+		},
 	}
 
 	startTime := time.Now()
-	resp, err := c.client.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

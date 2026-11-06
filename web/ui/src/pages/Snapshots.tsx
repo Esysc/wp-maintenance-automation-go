@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { apiGet } from '../api/client'
+import { apiDelete, apiGet } from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useSite } from '../context/SiteContext'
 import { useLanguage } from '../context/LanguageContext'
 import SiteSelector from '../components/SiteSelector'
 import LoadingState from '../components/LoadingState'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 interface Snapshot {
   id: string
@@ -20,6 +21,8 @@ export default function Snapshots() {
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Snapshot | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
   const { siteId, setSiteId } = useSite()
   const { toast } = useToast()
   const { t } = useLanguage()
@@ -41,6 +44,23 @@ export default function Snapshots() {
     setRefreshing(true)
     await load()
     setRefreshing(false)
+  }
+
+  async function deleteSnapshot(snap: Snapshot) {
+    setDeleteBusy(true)
+    try {
+      const res = await apiDelete('/api/v1/snapshots/' + (snap.id || snap.short_id))
+      if (res.success) {
+        toast(t('snapshot_deleted'), 'success')
+      } else {
+        toast(res.error || t('snapshot_delete_failed'), 'error')
+      }
+    } catch (e: any) {
+      toast(e.message || t('snapshot_delete_failed'), 'error')
+    }
+    setDeleteBusy(false)
+    setDeleteTarget(null)
+    load()
   }
 
   const filtered = siteId
@@ -72,6 +92,7 @@ export default function Snapshots() {
                 <th>{t('table_host')}</th>
                 <th>{t('table_tags')}</th>
                 <th>{t('table_paths')}</th>
+                <th>{t('table_actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -82,12 +103,23 @@ export default function Snapshots() {
                   <td>{s.hostname || s.host || '-'}</td>
                   <td>{(s.tags || []).join(', ') || '-'}</td>
                   <td title={(s.paths || []).join(', ') || undefined}>{(s.paths || []).join(', ').substring(0, 60) || '-'}</td>
+                  <td>
+                    <button onClick={() => setDeleteTarget(s)} className="btn btn-danger btn-sm">{t('btn_delete')}</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title={t('modal_delete_snapshot')}
+        message={deleteTarget ? t('modal_delete_snapshot_body') + ' (' + (deleteTarget.short_id || deleteTarget.id) + ')' : ''}
+        onConfirm={() => { if (deleteTarget) deleteSnapshot(deleteTarget) }}
+        onCancel={() => setDeleteTarget(null)}
+        busy={deleteBusy}
+      />
     </>
   )
 }

@@ -35,6 +35,8 @@ services:
       - SSH_AUTH_SOCK=/ssh-agent.sock
       - RESTIC_PASSWORD_FILE=/app/data/restic_password
       - RESTIC_PASSWORD=${RESTIC_PASSWORD}
+      - WPSCAN_API_TOKEN=${WPSCAN_API_TOKEN:-}
+      - WPSCAN_MAX_REQUESTS=${WPSCAN_MAX_REQUESTS:-20}
       - HOST_AGENT_URL=${HOST_AGENT_URL:-}
     volumes:
       - ./data:/app/data

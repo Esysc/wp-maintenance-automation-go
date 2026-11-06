@@ -2,6 +2,7 @@ package upgrade
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -157,7 +158,18 @@ func (um *UpgradeManager) runStagingRehearsal(report *UpgradeReport) error {
 		Phase: PhaseRehearse, Success: true, Message: "creating ephemeral staging environment", Timestamp: time.Now(),
 	})
 
-	env, err := um.stagingManager.Create(um.snapshotID, nil)
+	productionPHPVersion := ""
+	if um.sshClient != nil {
+		if version, err := um.sshClient.GetPHPVersion(um.wpRoot); err != nil {
+			log.Printf("staging rehearsal: could not detect production PHP version: %v", err)
+		} else {
+			productionPHPVersion = version
+			log.Printf("staging rehearsal: detected production PHP version %s", productionPHPVersion)
+		}
+	}
+	env, err := um.stagingManager.CreateWithOptions(um.snapshotID, nil, staging.CreateOptions{
+		PHPVersion: productionPHPVersion,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create staging environment: %w", err)
 	}
@@ -203,13 +215,15 @@ func (um *UpgradeManager) runStagingUpgrade(env *staging.StagingEnv, report *Upg
 		wpArgs    string
 		allowFail bool
 	}{
-		{"core update", "core update", false},
-		{"plugin update --all", "plugin update --all", true},
-		{"theme update --all", "theme update --all", true},
-		{"language core update", "language core update", true},
-		{"language plugin update --all", "language plugin update --all", true},
-		{"language theme update --all", "language theme update --all", true},
-		{"core update-db", "core update-db", true},
+		// A plugin or theme that cannot load must not abort the rehearsal before
+		// the healthcheck can report the real compatibility problem.
+		{"core update", "core update --skip-plugins --skip-themes", false},
+		{"plugin update --all", "plugin update --all --skip-plugins --skip-themes", true},
+		{"theme update --all", "theme update --all --skip-plugins --skip-themes", true},
+		{"language core update", "language core update --skip-plugins --skip-themes", true},
+		{"language plugin update --all", "language plugin update --all --skip-plugins --skip-themes", true},
+		{"language theme update --all", "language theme update --all --skip-plugins --skip-themes", true},
+		{"core update-db", "core update-db --skip-plugins --skip-themes", true},
 	}
 
 	for _, step := range upgradeSteps {

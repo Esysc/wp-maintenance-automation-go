@@ -268,7 +268,7 @@ Each WordPress site is configured through the Web UI and stored in the database 
 When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an ephemeral Docker-based staging rehearsal before the production upgrade:
 
 1. **Restore** — the latest restic snapshot is extracted to a temp directory
-2. **Detect versions** — WP version, DB version (MariaDB/MySQL), and credentials are read from the backup artifacts
+2. **Detect versions** — the WP version and DB credentials are read from the backup artifacts, and the production PHP major/minor version is detected over SSH so the staging stack mirrors production
 3. **Spin up containers** — a WordPress + MariaDB/MySQL stack is created via Docker Compose with matching versions, self-signed SSL, and WP-CLI
 4. **Seed the environment** — DB dump is imported, WordPress files are copied, `wp-config.php` is patched, and `siteurl`/`home` are updated to `https://localhost:<mapped_port>`
 5. **Run upgrade** — the full WP-CLI upgrade sequence runs against the staging container
@@ -276,6 +276,30 @@ When `staging_enabled` is set to `Yes` on a site, the upgrade flow includes an e
 7. **Cleanup** — on success, containers are destroyed; on failure, containers are kept for manual inspection
 
 Docker socket access (`/var/run/docker.sock`) must be mounted into the API container for staging to work. This is configured in `docker-compose.yml` by default.
+
+## Security Review
+
+Each rehearsal runs a non-invasive security review against the upgraded staging site. The **Security** page can also run the same review directly against the live production site's `healthcheck_url`, without creating a rehearsal. Production scans collect core/plugin/theme inventory over SSH/WP-CLI; if WP-CLI is unavailable, the report includes an inventory warning. Production scans verify TLS certificates; only rehearsal scans against self-signed staging containers disable verification.
+
+It checks common WordPress misconfigurations such as missing security headers, exposed backup/debug files, directory listings, XML-RPC, user enumeration, weak TLS versions, cookie flags, and HTTP TRACE.
+
+It also enriches the report with known vulnerabilities:
+
+- **WordPress core, plugins, and themes** via the [WPScan API](https://wpscan.com/api). Set `WPSCAN_API_TOKEN` to enable this. Free WPScan plans have a daily request quota; `WPSCAN_MAX_REQUESTS` caps lookups per rehearsal.
+- **Composer dependencies** bundled inside plugins/themes via the [OSV API](https://osv.dev).
+- **PHP end-of-life status** via [endoflife.date](https://endoflife.date/php).
+
+Results are cached for 24 hours in the `cve_cache` database table to avoid exhausting provider quotas. Findings include severity, evidence, a recommendation, and a concrete **How to fix** section with commands, headers, and configuration examples. They are reported as warnings and do not fail the rehearsal.
+
+This is a configuration and known-vulnerability review, not an exploit-based penetration test. Only scan systems you own or are authorized to test. For a full engagement, define the scope with a professional tester.
+
+```bash
+# Enable WordPress CVE lookups
+WPSCAN_API_TOKEN=your-wpscan-token
+
+# Optional: raise the per-rehearsal request budget on paid plans
+WPSCAN_MAX_REQUESTS=50
+```
 
 ## Host Metrics
 

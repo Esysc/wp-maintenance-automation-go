@@ -3,6 +3,7 @@ import SiteSelector from '../components/SiteSelector'
 import JobStatus, { type Job } from '../components/JobStatus'
 import ConfirmDialog from '../components/ConfirmDialog'
 import SiteHint from '../components/SiteHint'
+import SecurityReportCard, { type SecurityReport } from '../components/SecurityReport'
 import { apiGet, apiPost } from '../api/client'
 import { useToast } from '../context/ToastContext'
 import { useSite } from '../context/SiteContext'
@@ -10,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext'
 
 interface RehearsalEnv {
   health_url: string
+  preview_url?: string
   wp_version: string
   db_name: string
   snapshot_id: string
@@ -18,6 +20,7 @@ interface RehearsalEnv {
   inventory_before?: RehearsalInventory
   inventory_after?: RehearsalInventory
   inventory_rollback?: RehearsalInventory
+  security_report?: SecurityReport
 }
 
 interface RehearsalStep {
@@ -60,6 +63,15 @@ interface ResticSnapshot {
   id: string
   time: string
   tags: string[]
+}
+
+function previewPath(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.pathname + parsed.search
+  } catch {
+    return url
+  }
 }
 
 export default function Rehearsal() {
@@ -418,11 +430,30 @@ export default function Rehearsal() {
             )}
           </div>
 
+          {env.preview_url && envActive && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <h3>{t('rehearsal_preview_title')}</h3>
+              <p>
+                <a href={previewPath(env.preview_url)} target="_blank" rel="noopener">
+                  {t('rehearsal_open_in_tab')}
+                </a>
+              </p>
+              <iframe
+                src={previewPath(env.preview_url)}
+                title={t('rehearsal_preview_title')}
+                sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                referrerPolicy="no-referrer"
+                style={{ width: '100%', height: '70vh', border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
+              />
+            </div>
+          )}
+
           {renderStepBlock('Upgrade Stage Steps', env.upgrade_steps)}
           {renderStepBlock('Rollback Stage Steps', env.rollback_steps)}
           {renderInventoryBlock('Inventory Before Upgrade', env.inventory_before)}
           {renderInventoryBlock('Inventory After Upgrade', env.inventory_after)}
           {renderInventoryBlock('Inventory After Rollback', env.inventory_rollback)}
+          <SecurityReportCard report={env.security_report} note={t('rehearsal_security_note')} />
         </>
       )}
 

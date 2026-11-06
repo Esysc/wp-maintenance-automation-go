@@ -1,7 +1,10 @@
 ARG WP_VERSION=6.6.2
-ARG WP_PHP_VERSION=8.2
+ARG WP_PHP_VERSION=8.3
 
-FROM debian:bookworm-slim
+# Use the official PHP Apache image so any supported PHP major/minor can be
+# matched to the production host. Debian's own repositories only ship a single
+# PHP version, which made it impossible to rehearse sites on PHP 8.3+.
+FROM php:${WP_PHP_VERSION}-apache
 
 ARG WP_VERSION
 ARG WP_PHP_VERSION
@@ -10,25 +13,22 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-    apache2 \
     ca-certificates \
     curl \
+    libfreetype6-dev \
+    libjpeg62-turbo-dev \
+    libpng-dev \
+    libzip-dev \
     mariadb-client \
     openssh-server \
+    openssl \
     rsync \
     sudo \
-    openssl \
-    php${WP_PHP_VERSION} \
-    php${WP_PHP_VERSION}-mysqli \
-    php${WP_PHP_VERSION}-curl \
-    php${WP_PHP_VERSION}-gd \
-    php${WP_PHP_VERSION}-mbstring \
-    php${WP_PHP_VERSION}-xml \
-    php${WP_PHP_VERSION}-zip \
-    libapache2-mod-php${WP_PHP_VERSION} \
+ && docker-php-ext-configure gd --with-freetype --with-jpeg \
+ && docker-php-ext-install -j"$(nproc)" gd mysqli zip \
  && rm -rf /var/lib/apt/lists/*
 
-RUN a2enmod rewrite ssl
+RUN a2enmod rewrite ssl setenvif
 RUN mkdir -p /etc/apache2/ssl \
  && openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
     -keyout /etc/apache2/ssl/localhost.key \

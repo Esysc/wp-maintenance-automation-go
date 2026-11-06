@@ -155,3 +155,27 @@ func TestSecureArchivePath(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePHPVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"bare version", "8.3.27\n", "8.3.27"},
+		{"php -v output", "PHP 8.2.35 (cli) (built: Jan 1 2026)\nCopyright (c) The PHP Group", "8.2.35"},
+		{"wp --info json", `{"php_version":"8.4.2","php_binary":"/usr/bin/php"}`, "8.4.2"},
+		{"json fragment", `php_version: "8.3.1"`, "8.3.1"},
+		{"surrounding whitespace", "  8.4.1  ", "8.4.1"},
+		{"empty", "", ""},
+		{"unrelated output", "WordPress version 6.6.2", ""},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parsePHPVersion(c.in); got != c.want {
+				t.Fatalf("parsePHPVersion(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

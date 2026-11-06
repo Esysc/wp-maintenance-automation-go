@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,15 +57,31 @@ func NewEnv(composeFile, projectName, restoreDir, healthURL string) *StagingEnv 
 }
 
 func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEnv, error) {
-	return m.CreateWithPublicHost(snapshotID, rc, "")
+	return m.CreateWithOptions(snapshotID, rc, CreateOptions{})
 }
 
-// removeWPConfigConstantsScript removes active WP_HOME and WP_SITEURL
-// definitions from wp-config.php (in both quote styles) so the staging URL
-// stored in the database takes effect. Commented-out definitions are kept.
-const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]WP_\(HOME\|SITEURL\)['"]/d`
-
+// CreateWithPublicHost creates a staging environment and sets the host used in
+// its public healthcheck URL.
 func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClient, publicHost string) (*StagingEnv, error) {
+	return m.CreateWithOptions(snapshotID, rc, CreateOptions{PublicHost: publicHost})
+}
+
+// CreateOptions controls how a staging environment is built.
+type CreateOptions struct {
+	// PublicHost is the hostname used in the staging healthcheck URL.
+	PublicHost string
+	// PHPVersion is the production PHP version to mirror (for example
+	// "8.3" or "8.3.27"). The major/minor pair is used for the Docker image.
+	PHPVersion string
+}
+
+// removeWPConfigConstantsScript removes active WP_HOME, WP_SITEURL,
+// WPCACHEHOME, and WP_CACHE definitions from wp-config.php (in both quote
+// styles) so the staging copy uses its own URL, cache path, and fresh content.
+// Commented-out definitions are kept.
+const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]\(WP_HOME\|WP_SITEURL\|WPCACHEHOME\|WP_CACHE\)['"]/d`
+
+func (m *Manager) CreateWithOptions(snapshotID string, rc *restic.ResticClient, opts CreateOptions) (*StagingEnv, error) {
 	snapshotID = strings.TrimSpace(snapshotID)
 	if snapshotID == "" {
 		return nil, fmt.Errorf("snapshot ID is required")
@@ -79,7 +96,7 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 		SnapshotID:   snapshotID,
 		RestoreDir:   restoreDir,
 		ProjectName:  stagingProjectName(snapshotID),
-		PublicHost:   strings.TrimSpace(publicHost),
+		PublicHost:   strings.TrimSpace(opts.PublicHost),
 		BuildContext: m.buildContext,
 	}
 
@@ -91,6 +108,13 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	if err := env.detectVersions(restoreDir); err != nil {
 		os.RemoveAll(restoreDir)
 		return nil, fmt.Errorf("version detection failed: %w", err)
+	}
+
+	// Mirror the production PHP version when it was detected. Falling back to
+	// detectVersions' default keeps staging usable when detection is not
+	// possible.
+	if phpVersion := NormalizePHPVersion(opts.PHPVersion); phpVersion != "" {
+		env.PHPVersion = phpVersion
 	}
 
 	if err := env.detectDBCredentials(restoreDir); err != nil {
@@ -130,13 +154,18 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 		return nil, fmt.Errorf("file copy failed: %w", err)
 	}
 
+	if err := env.disableStagingCaches(); err != nil {
+		env.cleanup(false)
+		return nil, fmt.Errorf("staging cache disabling failed: %w", err)
+	}
+
 	if err := env.patchWPConfig(); err != nil {
 		env.cleanup(false)
 		return nil, fmt.Errorf("wp-config patch failed: %w", err)
 	}
 
-	// Remove WP_HOME and WP_SITEURL constants from wp-config.php so they
-	// don't override the database values we set in updateSiteURL().
+	// Remove site URL and cache-path constants from wp-config.php so the
+	// staging URL from the database and the staging cache paths take effect.
 	removeConstCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
@@ -206,7 +235,9 @@ func (env *StagingEnv) WPCLI(args string) (string, error) {
 		"compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
-		"exec", "-T", "wp",
+		"exec", "-T",
+		"-e", "HTTP_X_FORWARDED_PROTO=https",
+		"wp",
 		"wp", "--allow-root", "--path=/var/www/html",
 	}
 	if len(globalArgs) > 0 {
@@ -215,7 +246,6 @@ func (env *StagingEnv) WPCLI(args string) (string, error) {
 	cmdArgs = append(cmdArgs, commandArgs...)
 	cmd := exec.Command("docker", cmdArgs...)
 	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, "HTTP_X_FORWARDED_PROTO=https")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("wp-cli failed: %w\nOutput: %s", err, string(output))
@@ -443,6 +473,66 @@ func (env *StagingEnv) copyFiles() error {
 	return nil
 }
 
+// disableStagingCaches removes page-cache and object-cache drop-ins copied
+// from production. Their absolute paths and backing services belong to the
+// production host, and serving a cached production page would hide upgrade
+// changes from the rehearsal healthcheck and page comparison.
+func (env *StagingEnv) disableStagingCaches() error {
+	cmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp",
+		"rm", "-rf",
+		"/var/www/html/wp-content/advanced-cache.php",
+		"/var/www/html/wp-content/object-cache.php",
+		"/var/www/html/wp-content/cache",
+	)
+	cmd.Env = os.Environ()
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%w\nOutput: %s", err, string(out))
+	}
+	return nil
+}
+
+// ComposerInstalledJSON returns the contents of Composer installed.json files
+// from the running staging container. The container may contain newer plugin
+// versions than the host restore directory after the upgrade has run.
+func (env *StagingEnv) ComposerInstalledJSON() ([]string, error) {
+	findCmd := exec.Command("docker", "compose",
+		"-f", env.ComposeFile,
+		"-p", env.ProjectName,
+		"exec", "-T", "wp",
+		"sh", "-c",
+		"find /var/www/html/wp-content -type f -path '*/vendor/composer/installed.json' -print",
+	)
+	findCmd.Env = os.Environ()
+	output, err := findCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("composer file discovery failed: %w", err)
+	}
+
+	contents := make([]string, 0)
+	for _, path := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		catCmd := exec.Command("docker", "compose",
+			"-f", env.ComposeFile,
+			"-p", env.ProjectName,
+			"exec", "-T", "wp",
+			"cat", path,
+		)
+		catCmd.Env = os.Environ()
+		data, err := catCmd.Output()
+		if err != nil {
+			continue
+		}
+		contents = append(contents, string(data))
+	}
+	return contents, nil
+}
+
 func (env *StagingEnv) patchWPConfig() error {
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -488,13 +578,8 @@ func (env *StagingEnv) readTablePrefix() error {
 }
 
 func (env *StagingEnv) updateSiteURL() error {
-	prefixSQL := strings.TrimSpace(env.TablePrefix)
-	if prefixSQL == "" {
-		prefixSQL = "wp_"
-	}
-
 	oldURL, _ := env.getSiteURL()
-	log.Printf("staging: getSiteURL returned '%s' (db=%s, prefix=%s)", oldURL, env.DBName, prefixSQL)
+	log.Printf("staging: getSiteURL returned '%s' (db=%s, prefix=%s)", oldURL, env.DBName, env.TablePrefix)
 
 	host := env.PublicHost
 	if host == "" {
@@ -502,6 +587,16 @@ func (env *StagingEnv) updateSiteURL() error {
 	}
 	newURL := fmt.Sprintf("https://%s:%s", host, env.HTTPSPort)
 	log.Printf("staging: newURL='%s'", newURL)
+
+	env.applySiteURL(oldURL, newURL)
+	return nil
+}
+
+func (env *StagingEnv) applySiteURL(oldURL, newURL string) {
+	prefixSQL := strings.TrimSpace(env.TablePrefix)
+	if prefixSQL == "" {
+		prefixSQL = "wp_"
+	}
 
 	updateSQL := fmt.Sprintf(
 		"UPDATE %s.%s SET option_value=%s WHERE option_name IN ('siteurl','home')",
@@ -642,8 +737,6 @@ func (env *StagingEnv) updateSiteURL() error {
 			}
 		}
 	}
-
-	return nil
 }
 
 func (env *StagingEnv) getSiteURL() (string, error) {
@@ -790,6 +883,30 @@ var dbNameRe = regexp.MustCompile(`define\s*\(\s*['"]DB_NAME['"]\s*,\s*['"]([^'"
 var dbUserRe = regexp.MustCompile(`define\s*\(\s*['"]DB_USER['"]\s*,\s*['"]([^'"]+)['"]`)
 var dbPassRe = regexp.MustCompile(`define\s*\(\s*['"]DB_PASSWORD['"]\s*,\s*['"]([^'"]+)['"]`)
 
+var phpVersionRe = regexp.MustCompile(`(?i)^\s*(?:PHP\s+)?v?(\d+)\.(\d+)`)
+
+// NormalizePHPVersion extracts the major.minor pair used for Docker image tags
+// from a PHP version string such as "8.3.27" or "PHP 8.3.27". It returns an
+// empty string when the value is not a supported PHP version.
+func NormalizePHPVersion(version string) string {
+	matches := phpVersionRe.FindStringSubmatch(strings.TrimSpace(version))
+	if len(matches) != 3 {
+		return ""
+	}
+	major, err := strconv.Atoi(matches[1])
+	if err != nil || major < 7 {
+		return ""
+	}
+	minor, err := strconv.Atoi(matches[2])
+	if err != nil {
+		return ""
+	}
+	if major == 7 && minor < 4 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d", major, minor)
+}
+
 // stagingProjectName builds a Docker Compose project name from a snapshot ID.
 // It never slices the raw ID, so short or non-hex IDs cannot panic or produce
 // an invalid project name.
@@ -843,7 +960,7 @@ func (env *StagingEnv) detectVersions(restoreDir string) error {
 		env.WPVersion = "6.6.2"
 	}
 	if env.PHPVersion == "" {
-		env.PHPVersion = "8.2"
+		env.PHPVersion = "8.3"
 	}
 	env.DBImage = "mariadb"
 	env.DBTag = "10.11"

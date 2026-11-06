@@ -78,6 +78,8 @@ func TestRemoveWPConfigConstantsScript(t *testing.T) {
 define('WP_HOME', 'http://old.example.com');
   define( 'WP_SITEURL', 'http://old.example.com' );
 define("WP_HOME", "http://old.example.com");
+define('WPCACHEHOME', '/home/prod/html/wp-content/plugins/wp-super-cache/');
+define('WP_CACHE', true);
 define('DB_NAME', 'wordpress');
 // define('WP_HOME', 'http://commented.example.com');
 `
@@ -89,13 +91,36 @@ define('DB_NAME', 'wordpress');
 	}
 
 	got := string(out)
-	if strings.Contains(got, "old.example.com") {
-		t.Fatalf("active WP_HOME/WP_SITEURL definitions were not removed:\n%s", got)
+	for _, removed := range []string{"old.example.com", "WPCACHEHOME", "WP_CACHE"} {
+		if strings.Contains(got, removed) {
+			t.Fatalf("active %s definition was not removed:\n%s", removed, got)
+		}
 	}
 	if !strings.Contains(got, "define('DB_NAME', 'wordpress');") {
 		t.Fatalf("unrelated define was removed:\n%s", got)
 	}
 	if !strings.Contains(got, "// define('WP_HOME'") {
 		t.Fatalf("commented definition was removed:\n%s", got)
+	}
+}
+
+func TestNormalizePHPVersion(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "8.3.27", want: "8.3"},
+		{in: "PHP 8.2.35", want: "8.2"},
+		{in: " 8.4 ", want: "8.4"},
+		{in: "8", want: ""},
+		{in: "8.x", want: ""},
+		{in: "5.6.40", want: ""},
+		{in: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		if got := NormalizePHPVersion(tt.in); got != tt.want {
+			t.Errorf("NormalizePHPVersion(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

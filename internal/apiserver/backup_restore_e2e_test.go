@@ -129,6 +129,165 @@ func TestBackupMessUpRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestDeleteBackupRemovesResticSnapshot verifies that deleting a backup also
+// forgets its restic snapshot. Otherwise the snapshot keeps appearing in the
+// rehearsal picker and continues consuming repository space.
+func TestDeleteBackupRemovesResticSnapshot(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic binary not available; skipping backup deletion test")
+	}
+
+	fake := newFakeSSHClient(t)
+	if err := fake.seedFakeProdSite(); err != nil {
+		t.Fatalf("failed to seed fake prod site: %v", err)
+	}
+
+	s := setupRoundTripServer(t, fake)
+	defer s.Database.Close()
+
+	token := loginTestAdmin(t, s)
+
+	resticRepo := filepath.Join(t.TempDir(), "repo")
+	resticPassFile := filepath.Join(t.TempDir(), "restic_password")
+	if err := os.WriteFile(resticPassFile, []byte("test-restic-password"), 0600); err != nil {
+		t.Fatalf("failed to write restic password file: %v", err)
+	}
+	if err := os.MkdirAll(resticRepo, 0700); err != nil {
+		t.Fatalf("failed to create restic repo dir: %v", err)
+	}
+	resticClient, err := restic.NewClient(resticRepo, resticPassFile)
+	if err != nil {
+		t.Fatalf("failed to create restic client: %v", err)
+	}
+	if err := resticClient.Init(); err != nil {
+		t.Fatalf("failed to init restic repo: %v", err)
+	}
+	s.Restic = resticClient
+
+	siteID := createFakeSite(t, s, token, fake, resticRepo, resticPassFile)
+
+	backupJobID := enqueueJobViaAPI(t, s, token, "/api/v1/backup", map[string]interface{}{"site_id": siteID})
+	backupJob := waitForJob(t, s, token, backupJobID)
+	if backupJob.Status != "completed" {
+		t.Fatalf("backup job failed: status=%s error=%s", backupJob.Status, backupJob.Error)
+	}
+
+	backups, err := s.Database.GetBackupsBySite(siteID)
+	if err != nil {
+		t.Fatalf("failed to list backups: %v", err)
+	}
+	if len(backups) != 1 {
+		t.Fatalf("expected exactly 1 backup record, got %d", len(backups))
+	}
+	backupID := backups[0].ID
+
+	snapshots, err := resticClient.Snapshots()
+	if err != nil {
+		t.Fatalf("failed to list snapshots: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 restic snapshot before deletion, got %d", len(snapshots))
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/backups/"+backupID, nil)
+	rr := httptest.NewRecorder()
+	s.handleBackupByID(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete backup returned %d: %s", rr.Code, rr.Body.String())
+	}
+
+	backups, err = s.Database.GetBackupsBySite(siteID)
+	if err != nil {
+		t.Fatalf("failed to list backups after deletion: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected backup record to be deleted, got %d", len(backups))
+	}
+
+	snapshots, err = resticClient.Snapshots()
+	if err != nil {
+		t.Fatalf("failed to list snapshots after deletion: %v", err)
+	}
+	if len(snapshots) != 0 {
+		t.Fatalf("expected restic snapshot to be deleted, got %d", len(snapshots))
+	}
+}
+
+// TestDeleteSnapshotRemovesOrphanAndBackupRecord verifies the explicit
+// snapshot deletion path used to clean up snapshots whose backup row is
+// already gone.
+func TestDeleteSnapshotRemovesOrphanAndBackupRecord(t *testing.T) {
+	if _, err := exec.LookPath("restic"); err != nil {
+		t.Skip("restic binary not available; skipping snapshot deletion test")
+	}
+
+	fake := newFakeSSHClient(t)
+	if err := fake.seedFakeProdSite(); err != nil {
+		t.Fatalf("failed to seed fake prod site: %v", err)
+	}
+
+	s := setupRoundTripServer(t, fake)
+	defer s.Database.Close()
+
+	token := loginTestAdmin(t, s)
+
+	resticRepo := filepath.Join(t.TempDir(), "repo")
+	resticPassFile := filepath.Join(t.TempDir(), "restic_password")
+	if err := os.WriteFile(resticPassFile, []byte("test-restic-password"), 0600); err != nil {
+		t.Fatalf("failed to write restic password file: %v", err)
+	}
+	if err := os.MkdirAll(resticRepo, 0700); err != nil {
+		t.Fatalf("failed to create restic repo dir: %v", err)
+	}
+	resticClient, err := restic.NewClient(resticRepo, resticPassFile)
+	if err != nil {
+		t.Fatalf("failed to create restic client: %v", err)
+	}
+	if err := resticClient.Init(); err != nil {
+		t.Fatalf("failed to init restic repo: %v", err)
+	}
+	s.Restic = resticClient
+
+	siteID := createFakeSite(t, s, token, fake, resticRepo, resticPassFile)
+
+	backupJobID := enqueueJobViaAPI(t, s, token, "/api/v1/backup", map[string]interface{}{"site_id": siteID})
+	backupJob := waitForJob(t, s, token, backupJobID)
+	if backupJob.Status != "completed" {
+		t.Fatalf("backup job failed: status=%s error=%s", backupJob.Status, backupJob.Error)
+	}
+
+	snapshots, err := resticClient.Snapshots()
+	if err != nil {
+		t.Fatalf("failed to list snapshots: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("expected 1 restic snapshot, got %d", len(snapshots))
+	}
+
+	req := httptest.NewRequest("DELETE", "/api/v1/snapshots/"+snapshots[0].ID, nil)
+	rr := httptest.NewRecorder()
+	s.handleSnapshotByID(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("delete snapshot returned %d: %s", rr.Code, rr.Body.String())
+	}
+
+	snapshots, err = resticClient.Snapshots()
+	if err != nil {
+		t.Fatalf("failed to list snapshots after deletion: %v", err)
+	}
+	if len(snapshots) != 0 {
+		t.Fatalf("expected restic snapshot to be deleted, got %d", len(snapshots))
+	}
+
+	backups, err := s.Database.GetBackupsBySite(siteID)
+	if err != nil {
+		t.Fatalf("failed to list backups: %v", err)
+	}
+	if len(backups) != 0 {
+		t.Fatalf("expected related backup record to be deleted, got %d", len(backups))
+	}
+}
+
 // TestRestoreDryRunRejectedWithoutConfirm checks the safety gate: a restore
 // without confirm=true must not enqueue a job.
 func TestRestoreDryRunRejectedWithoutConfirm(t *testing.T) {

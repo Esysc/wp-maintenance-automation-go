@@ -225,6 +225,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleRehearsal))
 	mux.HandleFunc("/api/v1/rehearsal/active", s.authMiddleware(s.handleRehearsalActive))
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleRehearsalByID))
+	mux.HandleFunc("/api/v1/security/scan", s.authMiddleware(s.handleSecurityScan))
 
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleJobByID))
@@ -235,6 +236,9 @@ func Run() {
 	// Sandbox site served through the app so the browser can view it.
 	mux.HandleFunc("/sandbox-site", s.authMiddleware(s.handleSandboxSite))
 	mux.HandleFunc("/sandbox-site/", s.authMiddleware(s.handleSandboxSite))
+
+	// Rehearsal site served through the app so it can be embedded in the UI.
+	mux.HandleFunc("/rehearsal-site/", s.authMiddleware(s.handleRehearsalSite))
 
 	handler := corsMiddleware(mux)
 

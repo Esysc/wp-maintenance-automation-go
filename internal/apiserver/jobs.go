@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,12 +12,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/security"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/upgrade"
@@ -130,6 +133,64 @@ func collectRehearsalInventory(env *staging.StagingEnv) (*rehearsalInventory, er
 	return inv, nil
 }
 
+func rehearsalSecurityComponents(inv *rehearsalInventory, phpVersion string) []security.Component {
+	components := make([]security.Component, 0)
+	if inv == nil {
+		return components
+	}
+	if strings.TrimSpace(inv.CoreVersion) != "" {
+		components = append(components, security.Component{
+			Type:    "core",
+			Slug:    "wordpress",
+			Name:    "WordPress",
+			Version: strings.TrimSpace(inv.CoreVersion),
+			Active:  true,
+		})
+	}
+	for _, plugin := range inv.Plugins {
+		status := strings.ToLower(strings.TrimSpace(plugin.Status))
+		if status != "active" && status != "must-use" {
+			continue
+		}
+		if plugin.Name == "" || plugin.Version == "" {
+			continue
+		}
+		components = append(components, security.Component{
+			Type:    "plugin",
+			Slug:    plugin.Name,
+			Name:    plugin.Name,
+			Version: plugin.Version,
+			Active:  true,
+		})
+	}
+	for _, theme := range inv.Themes {
+		status := strings.ToLower(strings.TrimSpace(theme.Status))
+		if status != "active" && status != "parent" {
+			continue
+		}
+		if theme.Name == "" || theme.Version == "" {
+			continue
+		}
+		components = append(components, security.Component{
+			Type:    "theme",
+			Slug:    theme.Name,
+			Name:    theme.Name,
+			Version: theme.Version,
+			Active:  true,
+		})
+	}
+	if strings.TrimSpace(phpVersion) != "" {
+		components = append(components, security.Component{
+			Type:    "php",
+			Slug:    "php",
+			Name:    "PHP",
+			Version: phpVersion,
+			Active:  true,
+		})
+	}
+	return components
+}
+
 func waitForRehearsalWPCLIReady(env *staging.StagingEnv) error {
 	if _, err := wpcliWithRetry(env, "core version --skip-plugins --skip-themes", 12, 2*time.Second); err != nil {
 		return fmt.Errorf("wp-cli readiness check failed (core version): %w", err)
@@ -177,13 +238,16 @@ func runRehearsalUpgradeStage(env *staging.StagingEnv) []rehearsalUpgradeStep {
 		command   string
 		allowFail bool
 	}{
-		{name: "core update", command: "core update", allowFail: false},
-		{name: "plugin update", command: "plugin update --all", allowFail: true},
-		{name: "theme update", command: "theme update --all", allowFail: true},
-		{name: "language core update", command: "language core update", allowFail: true},
-		{name: "language plugin update", command: "language plugin update --all", allowFail: true},
-		{name: "language theme update", command: "language theme update --all", allowFail: true},
-		{name: "database update", command: "core update-db", allowFail: true},
+		// Skip plugin and theme loading during the upgrade stage. A plugin that
+		// is incompatible with the staging PHP version must not abort the whole
+		// rehearsal before the healthcheck can report the real problem.
+		{name: "core update", command: "core update --skip-plugins --skip-themes", allowFail: false},
+		{name: "plugin update", command: "plugin update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "theme update", command: "theme update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "language core update", command: "language core update --skip-plugins --skip-themes", allowFail: true},
+		{name: "language plugin update", command: "language plugin update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "language theme update", command: "language theme update --all --skip-plugins --skip-themes", allowFail: true},
+		{name: "database update", command: "core update-db --skip-plugins --skip-themes", allowFail: true},
 	}
 
 	results := make([]rehearsalUpgradeStep, 0, len(steps))
@@ -207,7 +271,7 @@ func runRehearsalUpgradeStage(env *staging.StagingEnv) []rehearsalUpgradeStep {
 	return results
 }
 
-func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snapshotID string, rc *restic.ResticClient, publicHost string) (*staging.StagingEnv, []rehearsalUpgradeStep, error) {
+func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snapshotID string, rc *restic.ResticClient, publicHost, phpVersion string) (*staging.StagingEnv, []rehearsalUpgradeStep, error) {
 	steps := []rehearsalUpgradeStep{}
 
 	if err := m.Destroy(env); err != nil {
@@ -226,7 +290,10 @@ func runRehearsalRollbackStage(m *staging.Manager, env *staging.StagingEnv, snap
 		Success: true,
 	})
 
-	rolledBackEnv, err := m.CreateWithPublicHost(snapshotID, rc, publicHost)
+	rolledBackEnv, err := m.CreateWithOptions(snapshotID, rc, staging.CreateOptions{
+		PublicHost: publicHost,
+		PHPVersion: phpVersion,
+	})
 	if err != nil {
 		steps = append(steps, rehearsalUpgradeStep{
 			Name:    "restore snapshot into fresh staging environment",
@@ -770,7 +837,17 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 		}
 
 		setStatus("running", "Restoring snapshot to staging...", 30)
-		env, err := s.StagingManager.CreateWithPublicHost(snapshotID, resticClient, tuple.req.PublicHost)
+		productionPHPVersion := ""
+		if version, err := sshClient.GetPHPVersion(wpRoot); err != nil {
+			log.Printf("rehearsal: could not detect production PHP version: %v", err)
+		} else {
+			productionPHPVersion = strings.TrimSpace(version)
+			log.Printf("rehearsal: detected production PHP version %s", productionPHPVersion)
+		}
+		env, err := s.StagingManager.CreateWithOptions(snapshotID, resticClient, staging.CreateOptions{
+			PublicHost: tuple.req.PublicHost,
+			PHPVersion: productionPHPVersion,
+		})
 		if err != nil {
 			setError("failed to create staging environment: " + err.Error())
 			return
@@ -855,14 +932,71 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			})
 		}
 
+		setStatus("running", "Running security review on upgraded rehearsal environment...", 84)
+		scanCtx, cancelScan := context.WithTimeout(context.Background(), 60*time.Second)
+		securityReport, securityErr := security.Scan(scanCtx, env.HealthURL, security.Options{
+			Timeout:            8 * time.Second,
+			InsecureSkipVerify: true, // rehearsal containers use a self-signed certificate
+		})
+		cancelScan()
+		if securityErr != nil {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "security review",
+				Command: "security scan",
+				Output:  securityErr.Error(),
+				Success: false,
+			})
+		} else {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "security review",
+				Command: "security scan",
+				Output:  securityReport.Summary(),
+				Success: true,
+			})
+		}
+
 		inventoryAfter, err := collectRehearsalInventory(env)
 		if err != nil {
 			setError("failed to collect upgraded rehearsal inventory: " + err.Error())
 			return
 		}
 
+		setStatus("running", "Checking known vulnerabilities...", 86)
+		maxRequests := 0
+		if raw := strings.TrimSpace(os.Getenv("WPSCAN_MAX_REQUESTS")); raw != "" {
+			if parsed, err := strconv.Atoi(raw); err == nil {
+				maxRequests = parsed
+			}
+		}
+		cveCtx, cancelCVE := context.WithTimeout(context.Background(), 90*time.Second)
+		composerContents, composerErr := env.ComposerInstalledJSON()
+		if composerErr != nil {
+			log.Printf("rehearsal: composer dependency discovery failed: %v", composerErr)
+		}
+		cveFindings := security.LookupVulnerabilities(
+			cveCtx,
+			rehearsalSecurityComponents(inventoryAfter, env.PHPVersion),
+			composerContents,
+			security.VulnerabilityOptions{
+				WPScanToken: os.Getenv("WPSCAN_API_TOKEN"),
+				MaxRequests: maxRequests,
+				Cache:       &dbCVECache{db: s.Database},
+			},
+		)
+		cancelCVE()
+		if securityReport == nil {
+			securityReport = &security.Report{Target: env.HealthURL, ScannedAt: time.Now().UTC(), Counts: map[string]int{}}
+		}
+		securityReport.AddFindings(cveFindings...)
+		upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+			Name:    "known vulnerabilities",
+			Command: "cve lookup",
+			Output:  securityReport.Summary(),
+			Success: true,
+		})
+
 		setStatus("running", "Running rollback stage on rehearsal environment...", 88)
-		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost)
+		rolledBackEnv, rollbackSteps, err := runRehearsalRollbackStage(s.StagingManager, env, snapshotID, resticClient, tuple.req.PublicHost, env.PHPVersion)
 		if err != nil {
 			setError("rehearsal rollback stage failed: " + err.Error())
 			return
@@ -881,18 +1015,40 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
+		var rehearsalFailures []string
+		if healthcheckErr != nil {
+			rehearsalFailures = append(rehearsalFailures, "rehearsal healthcheck failed: "+healthcheckErr.Error())
+		}
 		if comparisonErr != nil {
-			setError("production and rehearsal page comparison failed: " + comparisonErr.Error())
+			rehearsalFailures = append(rehearsalFailures, "production and rehearsal page comparison failed: "+comparisonErr.Error())
+		}
+		if len(rehearsalFailures) > 0 {
+			// The rollback already replaced the upgraded environment with a
+			// pristine copy of the snapshot, so there is nothing left to debug.
+			if err := s.StagingManager.Destroy(rolledBackEnv); err != nil {
+				log.Printf("rehearsal: failed to clean up rolled-back staging environment: %v", err)
+			}
+			setError(strings.Join(rehearsalFailures, "; "))
 			return
 		}
 
+		previewURL := "/rehearsal-site/" + job.ID + "/"
+
 		setStatus("running", "Staging environment ready", 96)
+		proxyHost := rolledBackEnv.PublicHost
+		if proxyHost == "" {
+			proxyHost = "localhost"
+		}
+		proxyURL := fmt.Sprintf("http://%s:%s", proxyHost, rolledBackEnv.WPSPort)
 		resultJSON, _ := json.Marshal(map[string]interface{}{
 			"health_url":         rolledBackEnv.HealthURL,
+			"proxy_url":          proxyURL,
+			"preview_url":        previewURL,
 			"compose_file":       rolledBackEnv.ComposeFile,
 			"project_name":       rolledBackEnv.ProjectName,
 			"restore_dir":        rolledBackEnv.RestoreDir,
 			"wp_version":         rolledBackEnv.WPVersion,
+			"php_version":        rolledBackEnv.PHPVersion,
 			"db_name":            rolledBackEnv.DBName,
 			"snapshot_id":        snapshotID,
 			"upgrade_steps":      upgradeSteps,
@@ -900,6 +1056,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			"inventory_before":   inventoryBefore,
 			"inventory_after":    inventoryAfter,
 			"inventory_rollback": inventoryRollback,
+			"security_report":    securityReport,
 		})
 		setResult(string(resultJSON))
 

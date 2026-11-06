@@ -196,6 +196,10 @@ func (f *fakeSSHClient) GetWpVersion(wpRoot string) (string, error) {
 	return "", fmt.Errorf("fake ssh: version not found")
 }
 
+func (f *fakeSSHClient) GetPHPVersion(wpRoot string) (string, error) {
+	return "8.3.27", nil
+}
+
 func (f *fakeSSHClient) ParseDBConfig(wpRoot string) (string, string, string, string, error) {
 	content, err := os.ReadFile(filepath.Join(f.resolveRemote(wpRoot), "wp-config.php"))
 	if err != nil {

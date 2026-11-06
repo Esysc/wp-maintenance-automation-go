@@ -105,6 +105,7 @@ func Run() {
 	mux.HandleFunc("/api/v1/snapshots/", s.authMiddleware(s.handleAPISnapshots))
 	mux.HandleFunc("/api/v1/rehearsal", s.authMiddleware(s.handleAPIRehearsal))
 	mux.HandleFunc("/api/v1/rehearsal/", s.authMiddleware(s.handleAPIRehearsalByID))
+	mux.HandleFunc("/api/v1/security/scan", s.authMiddleware(s.handleAPISecurityScan))
 	mux.HandleFunc("/api/v1/jobs", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/jobs/", s.authMiddleware(s.handleAPIJobs))
 	mux.HandleFunc("/api/v1/sandbox", s.authMiddleware(s.handleAPISandbox))
@@ -113,10 +114,12 @@ func Run() {
 	mux.HandleFunc("/api/docs/", s.handleDocs)
 
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
+	mux.HandleFunc("/static/locales/", s.handleStaticLocales)
 	mux.Handle("/ui/assets/", http.StripPrefix("/ui/", http.FileServer(http.Dir(filepath.Join(staticDir, "ui")))))
 	mux.HandleFunc("/ui/", s.handleUISPA)
 	mux.HandleFunc("/ui", s.handleUISPA)
 	mux.HandleFunc("/sandbox-site/", s.handleSandboxSite)
+	mux.HandleFunc("/rehearsal-site/", s.authMiddleware(s.handleAPISiteProxy))
 
 	tlsDisable := os.Getenv("WEB_TLS_DISABLE")
 
@@ -207,7 +210,15 @@ func (s *WebServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func (s *WebServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
+}
+
+// handleStaticLocales serves translation files without long-lived caching so
+// newly added keys appear without requiring a hard refresh.
+func (s *WebServer) handleStaticLocales(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+	http.StripPrefix("/static/", http.FileServer(http.Dir(s.staticDir))).ServeHTTP(w, r)
 }
 
 func (s *WebServer) handleAPILogin(w http.ResponseWriter, r *http.Request) {
@@ -401,6 +412,12 @@ func (s *WebServer) handleAPISites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleAPISnapshots(w http.ResponseWriter, r *http.Request) {
+	// Preserve the snapshot ID for detail/delete requests. The legacy
+	// /api/snapshots route has no ID form and maps to the v1 collection.
+	if strings.HasPrefix(r.URL.Path, "/api/v1/snapshots/") {
+		s.proxyRequest(w, r, r.URL.Path)
+		return
+	}
 	s.proxyRequest(w, r, "/api/v1/snapshots")
 }
 
@@ -410,6 +427,10 @@ func (s *WebServer) handleAPIRehearsal(w http.ResponseWriter, r *http.Request) {
 
 func (s *WebServer) handleAPIRehearsalByID(w http.ResponseWriter, r *http.Request) {
 	s.proxyRequest(w, r, r.URL.Path)
+}
+
+func (s *WebServer) handleAPISecurityScan(w http.ResponseWriter, r *http.Request) {
+	s.proxyRequestWithClient(w, r, "/api/v1/security/scan", s.longClient)
 }
 
 func (s *WebServer) handleAPIJobs(w http.ResponseWriter, r *http.Request) {
@@ -477,6 +498,12 @@ func (s *WebServer) forwardedHeaders(apiReq *http.Request, r *http.Request) {
 // serves the sandbox WordPress site over the Docker-internal network. This
 // lets the browser open the sandbox site through the application's own URL.
 func (s *WebServer) handleSandboxSite(w http.ResponseWriter, r *http.Request) {
+	s.handleAPISiteProxy(w, r)
+}
+
+// handleAPISiteProxy forwards a site preview path to the API server while
+// preserving the path and browser authentication.
+func (s *WebServer) handleAPISiteProxy(w http.ResponseWriter, r *http.Request) {
 	apiURL, err := url.Parse(s.apiBaseURL)
 	if err != nil {
 		http.Error(w, "invalid api url", http.StatusInternalServerError)
@@ -595,6 +622,7 @@ func (s *WebServer) proxyStreaming(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleUISPA(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache, must-revalidate")
 	http.ServeFile(w, r, filepath.Join(s.staticDir, "ui", "index.html"))
 }
 

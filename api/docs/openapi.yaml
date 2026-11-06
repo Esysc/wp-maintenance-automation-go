@@ -870,6 +870,7 @@ paths:
     delete:
       summary: Delete backup
       operationId: deleteBackupById
+      description: Deletes the backup record and forgets its restic snapshot.
       parameters:
         - name: id
           in: path
@@ -879,6 +880,8 @@ paths:
       responses:
         '200':
           description: Backup deleted
+        '404':
+          description: Backup not found
 
   /api/v1/snapshots:
     get:
@@ -912,6 +915,21 @@ paths:
       responses:
         '200':
           description: Successful response
+    delete:
+      summary: Delete snapshot
+      operationId: deleteSnapshotById
+      description: Forgets the restic snapshot and removes any backup records that reference it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Snapshot deleted
+        '404':
+          description: Snapshot not found
 
   /api/v1/healthcheck:
     post:

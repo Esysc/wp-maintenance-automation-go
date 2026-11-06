@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+- The Snapshots page can now delete restic snapshots directly, and the new UI strings are translated into all supported languages.
+- Rehearsal staging now detects the production PHP major/minor version over SSH and mirrors it in the staging container.
+- The Rehearsal page can now embed the running rehearsal site in an iframe through a same-origin authenticated proxy, so no extra tab or self-signed certificate exception is needed.
+- Rehearsal now runs a non-invasive WordPress security review against the upgraded staging site and reports findings with severity, evidence, and recommendations in the UI.
+- Security reviews now include known CVEs: WordPress core/plugins/themes via WPScan (`WPSCAN_API_TOKEN`), bundled Composer dependencies via OSV, and PHP end-of-life status. Results are cached for 24 hours and can be capped with `WPSCAN_MAX_REQUESTS`.
+- The Security page can run an on-demand, non-invasive security and CVE review against the live production site without creating a rehearsal. Production inventory is collected over SSH/WP-CLI.
+- Security findings now include concrete "How to fix" steps with commands, headers, and configuration examples for each issue.
+
+### Fixed
+- Security scans now verify TLS certificates by default, and only rehearsal scans against self-signed staging containers opt out. The TLS probe now uses port 443 when the URL omits a port and sends the correct SNI hostname.
+- The embedded rehearsal preview is sandboxed without same-origin access and served with a restrictive CSP (`frame-ancestors 'self'`, `form-action 'none'`, `connect-src 'none'`), so preview scripts cannot act with the application session.
+- The rehearsal preview proxy caps response rewriting at 4 MiB and streams larger responses unchanged instead of buffering them in memory.
+- Rehearsal staging environments no longer fall back to PHP 8.2 when production runs a newer PHP version, preventing plugins that require PHP 8.3+ from fatally breaking WP-CLI. The staging image is now based on the official PHP Apache image so PHP 8.3+ can actually be installed.
+- Staging containers now receive `HTTP_X_FORWARDED_PROTO=https`, so production `wp-config.php` logic that reads that header works for both web requests and WP-CLI.
+- Rehearsal upgrade steps skip loading plugins and themes while updating, so one incompatible plugin cannot abort the whole stage before the healthcheck reports the real problem. A failed rehearsal healthcheck is now reported as a failure instead of being silently followed by a successful result.
+- Deleting a backup now also forgets its restic snapshot, so deleted backups no longer linger in the rehearsal snapshot picker.
+- The web proxy now keeps the snapshot ID when forwarding `/api/v1/snapshots/<id>` requests, fixing `405 Method Not Allowed` errors when deleting a snapshot from the UI.
+- Restic deletions now detect stale repository locks, run `restic unlock`, and retry the forget operation instead of returning a 500.
+- Production PHP detection now uses `wp --info` with a bounded per-command timeout, so an unresponsive WP-CLI or SSH host cannot block a rehearsal indefinitely.
+- Staging now strips production cache drop-ins and the `WP_CACHE`/`WPCACHEHOME` constants, and Apache sets `HTTP_X_FORWARDED_PROTO=https`. This removes PHP warnings and stale production cache output from rehearsal pages, so the production-vs-rehearsal comparison reflects the actual upgrade.
+
 ## [0.5.3] - 2026-11-06
 
 ### Security

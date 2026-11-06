@@ -1,18 +1,25 @@
 package apiserver
 
 import (
+	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/healthcheck"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/version"
@@ -578,6 +585,25 @@ func (s *APIServer) handleBackup(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// resticClientForSite returns the restic client that stores a site's snapshots.
+// Sites may override the repository; otherwise the server-wide client is used.
+func (s *APIServer) resticClientForSite(site *db.Site) (*restic.ResticClient, error) {
+	repository := ""
+	passwordFile := ""
+	if site != nil {
+		repository = site.ResticRepository
+		passwordFile = site.ResticPasswordFile
+	}
+	if repository == "" && s.Restic != nil {
+		repository = s.Restic.Repository
+		passwordFile = s.Restic.PasswordFile
+	}
+	if repository == "" {
+		return nil, fmt.Errorf("no restic repository configured")
+	}
+	return restic.NewClient(repository, passwordFile)
+}
+
 func (s *APIServer) handleBackupByID(w http.ResponseWriter, r *http.Request) {
 	backupID := strings.TrimPrefix(r.URL.Path, "/api/v1/backups/")
 
@@ -591,6 +617,37 @@ func (s *APIServer) handleBackupByID(w http.ResponseWriter, r *http.Request) {
 			apiErr(w, http.StatusBadRequest, "backup id is required")
 			return
 		}
+
+		backup, err := s.Database.GetBackupByID(backupID)
+		if err != nil {
+			if err.Error() == "backup not found" {
+				apiErr(w, http.StatusNotFound, "backup not found")
+			} else {
+				apiErr(w, http.StatusInternalServerError, "failed to load backup")
+			}
+			return
+		}
+
+		// Remove the restic snapshot first. Deleting only the database row
+		// would leave an orphan snapshot that still appears in the rehearsal
+		// snapshot picker and keeps consuming repository space.
+		if strings.TrimSpace(backup.SnapshotID) != "" {
+			site, siteErr := s.Database.GetSite(backup.SiteID)
+			if siteErr != nil {
+				apiErr(w, http.StatusInternalServerError, "failed to load backup site")
+				return
+			}
+			resticClient, clientErr := s.resticClientForSite(site)
+			if clientErr != nil {
+				apiErr(w, http.StatusServiceUnavailable, "restic not configured")
+				return
+			}
+			if forgetErr := resticClient.Forget(backup.SnapshotID); forgetErr != nil {
+				apiErr(w, http.StatusInternalServerError, "failed to delete restic snapshot: "+forgetErr.Error())
+				return
+			}
+		}
+
 		if err := s.Database.DeleteBackup(backupID); err != nil {
 			apiErr(w, http.StatusInternalServerError, "failed to delete backup")
 			return
@@ -695,6 +752,40 @@ func (s *APIServer) handleSnapshotByID(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		apiErr(w, http.StatusNotFound, "snapshot not found")
+
+	case "DELETE":
+		snapshots, err := s.Restic.Snapshots()
+		if err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to get snapshots")
+			return
+		}
+
+		var target *restic.Snapshot
+		for i := range snapshots {
+			if snapshots[i].ID == snapshotID || snapshots[i].ShortID == snapshotID {
+				target = &snapshots[i]
+				break
+			}
+		}
+		if target == nil {
+			apiErr(w, http.StatusNotFound, "snapshot not found")
+			return
+		}
+
+		if err := s.Restic.Forget(target.ID); err != nil {
+			apiErr(w, http.StatusInternalServerError, "failed to delete restic snapshot: "+err.Error())
+			return
+		}
+
+		// Backups store the short ID, so remove records for both forms to
+		// avoid leaving rows that point at a snapshot that no longer exists.
+		for _, id := range []string{target.ShortID, target.ID} {
+			if err := s.Database.DeleteBackupsBySnapshotID(id); err != nil {
+				log.Printf("failed to delete backup records for snapshot %s: %v", id, err)
+			}
+		}
+
+		jsonResp(w, http.StatusOK, map[string]string{"message": "snapshot deleted"})
 
 	default:
 		apiErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -1091,6 +1182,193 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 		"active": true,
 		"env":    envData,
 	})
+}
+
+// handleRehearsalSite proxies the running rehearsal site through the
+// application so it can be embedded in the Rehearsal page with the same
+// origin, TLS certificate, and authentication as the main UI.
+func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/rehearsal-site/")
+	jobID, targetPath, hasSlash := strings.Cut(rest, "/")
+	if jobID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !hasSlash {
+		target := r.URL.Path + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		return
+	}
+
+	job, err := s.Database.GetJob(jobID)
+	if err != nil || job == nil || strings.TrimSpace(job.Result) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var envData struct {
+		HealthURL  string `json:"health_url"`
+		ProxyURL   string `json:"proxy_url"`
+		PreviewURL string `json:"preview_url"`
+	}
+	if err := json.Unmarshal([]byte(job.Result), &envData); err != nil || envData.HealthURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	target := envData.ProxyURL
+	if strings.TrimSpace(target) == "" {
+		target = envData.HealthURL
+	}
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		http.Error(w, "invalid rehearsal target", http.StatusInternalServerError)
+		return
+	}
+	siteHost := targetURL.Host
+	if healthURL, err := url.Parse(envData.HealthURL); err == nil && healthURL.Host != "" {
+		// The public site URL uses the HTTPS port. The proxy may connect to
+		// the HTTP port, but WordPress must still see the canonical host.
+		siteHost = healthURL.Host
+	}
+
+	forwardPath := "/"
+	if targetPath != "" {
+		forwardPath = "/" + targetPath
+	}
+	previewPrefix := "/rehearsal-site/" + jobID
+	origins := []string{envData.HealthURL, envData.ProxyURL}
+
+	proxy := &httputil.ReverseProxy{
+		Transport: &http.Transport{
+			TLSClientConfig:    &tls.Config{InsecureSkipVerify: true},
+			DisableCompression: true,
+		},
+		Director: func(req *http.Request) {
+			req.URL.Scheme = targetURL.Scheme
+			req.URL.Host = targetURL.Host
+			req.URL.Path = forwardPath
+			req.URL.RawQuery = r.URL.RawQuery
+			req.Host = siteHost
+			// The staging site URL is always the direct HTTPS URL. Telling
+			// WordPress the request is HTTPS avoids canonical scheme redirects.
+			req.Header.Set("X-Forwarded-Proto", "https")
+			req.Header.Del("Accept-Encoding")
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			resp.Header.Del("X-Frame-Options")
+			if isHTMLResponse(resp.Header.Get("Content-Type")) {
+				resp.Header.Set("Content-Security-Policy", rehearsalPreviewCSP(resp.Header.Get("Content-Security-Policy")))
+			}
+			for _, header := range []string{"Location", "Content-Location", "Link", "X-TEC-API-ROOT", "X-TEC-API-ORIGIN"} {
+				if value := resp.Header.Get(header); value != "" {
+					resp.Header.Set(header, rewriteRehearsalOrigins(value, origins, previewPrefix))
+				}
+			}
+
+			if !isTextResponse(resp.Header.Get("Content-Type")) {
+				return nil
+			}
+			if resp.ContentLength > maxPreviewRewriteBody {
+				return nil
+			}
+			original := resp.Body
+			body, err := io.ReadAll(io.LimitReader(original, maxPreviewRewriteBody+1))
+			if err != nil {
+				original.Close()
+				return err
+			}
+			if int64(len(body)) > maxPreviewRewriteBody {
+				// Too large to rewrite in memory. Restore the response unchanged
+				// by streaming the bytes that were already read followed by the
+				// remainder of the original body.
+				resp.Body = struct {
+					io.Reader
+					io.Closer
+				}{io.MultiReader(bytes.NewReader(body), original), original}
+				return nil
+			}
+			original.Close()
+			rewritten := rewriteRehearsalOrigins(string(body), origins, previewPrefix)
+			resp.Body = io.NopCloser(bytes.NewReader([]byte(rewritten)))
+			resp.ContentLength = int64(len(rewritten))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+			resp.Header.Del("Content-Encoding")
+			return nil
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// maxPreviewRewriteBody caps the amount of proxied content that is buffered
+// for URL rewriting. Larger responses are streamed through unchanged.
+const maxPreviewRewriteBody = 4 << 20
+
+func isTextResponse(contentType string) bool {
+	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	switch contentType {
+	case "application/json", "application/javascript", "application/xml",
+		"application/xhtml+xml", "image/svg+xml":
+		return true
+	}
+	return strings.HasPrefix(contentType, "text/")
+}
+
+func isHTMLResponse(contentType string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	return mediaType == "text/html" || mediaType == "application/xhtml+xml"
+}
+
+// rehearsalPreviewCSP keeps the embedded preview on this origin while
+// preventing it from submitting forms or calling the application API.
+func rehearsalPreviewCSP(existing string) string {
+	csp := removeCSPDirective(existing, "frame-ancestors")
+	csp = removeCSPDirective(csp, "form-action")
+	csp = removeCSPDirective(csp, "connect-src")
+	csp = removeCSPDirective(csp, "sandbox")
+	directives := []string{
+		"sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox",
+		"frame-ancestors 'self'",
+		"form-action 'none'",
+		"connect-src 'none'",
+	}
+	if strings.TrimSpace(csp) != "" {
+		directives = append([]string{csp}, directives...)
+	}
+	return strings.Join(directives, "; ")
+} // rewriteRehearsalOrigins rewrites the staging origin(s) back to the
+// application preview prefix so the browser keeps using the same origin.
+func rewriteRehearsalOrigins(value string, origins []string, previewPrefix string) string {
+	for _, origin := range origins {
+		origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+		if origin == "" {
+			continue
+		}
+		value = strings.ReplaceAll(value, origin, previewPrefix)
+		if u, err := url.Parse(origin); err == nil && u.Host != "" {
+			value = strings.ReplaceAll(value, "//"+u.Host, previewPrefix)
+		}
+	}
+	return value
+}
+
+func removeCSPDirective(csp, directive string) string {
+	parts := strings.Split(csp, ";")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(part), strings.ToLower(directive)) {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, "; ")
 }
 
 func (s *APIServer) handleRehearsalByID(w http.ResponseWriter, r *http.Request) {

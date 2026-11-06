@@ -3,6 +3,7 @@ package healthcheck
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -124,5 +125,23 @@ func TestCheckResultFields(t *testing.T) {
 
 	if result["response_time_ms"].(int64) == 0 && result["passed"].(bool) {
 		t.Log("response time was 0ms (fast localhost)")
+	}
+}
+
+func TestCheckClampsNonPositiveRetries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := server.URL
+	server.Close()
+
+	hc := NewChecker()
+	opts := NewDefaultOptions(url)
+	opts.MaxRetries = 0
+
+	_, err := hc.Check(opts)
+	if err == nil {
+		t.Fatal("expected connection error, got nil")
+	}
+	if !strings.Contains(err.Error(), "after 1 attempts") {
+		t.Fatalf("expected a single attempt, got error: %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -81,7 +82,7 @@ func (f *fakeSSHClient) FileExists(remotePath string) (bool, error) {
 var (
 	reCredHeredoc = regexp.MustCompile(`^umask 077 && cat > '([^']+)' << 'EOF'\n`)
 	reMysqldump   = regexp.MustCompile(`^mysqldump\s+.* '([^']+)' > '([^']+)'`)
-	reMysqlImport = regexp.MustCompile(`^mysql\s+-u\S+\s+-p'[^']*'\s+-h\S+\s+(\S+)\s+<\s*'?([^'\s]+)'?\s*&&\s*rm\s+-f\s+'?([^'\s]+)'?$`)
+	reMysqlImport = regexp.MustCompile(`^(?:gunzip\s+-c\s+'([^']+)'\s+\|\s+)?mysql\s+--defaults-extra-file='[^']+'\s+'([^']+)'\s*(?:<\s*'([^']+)')?\s*&&\s*rm\s+-f\s+'([^']+)'$`)
 	reTestS       = regexp.MustCompile(`^test -s '([^']+)'$`)
 	reRm          = regexp.MustCompile(`^rm -f '([^']+)'$`)
 )
@@ -128,9 +129,12 @@ func (f *fakeSSHClient) RunCommand(cmd string) (string, error) {
 
 	case reMysqlImport.MatchString(cmd):
 		match := reMysqlImport.FindStringSubmatch(cmd)
-		dbName, srcFile, rmFile := match[1], match[2], match[3]
+		gzFile, dbName, srcFile, rmFile := match[1], match[2], match[3], match[4]
 		if dbName != f.dbName {
 			return "", fmt.Errorf("fake ssh: mysql import into unknown database %q", dbName)
+		}
+		if srcFile == "" {
+			srcFile = gzFile
 		}
 		data, err := os.ReadFile(f.resolveRemote(srcFile))
 		if err != nil {
@@ -247,17 +251,7 @@ func (f *fakeSSHClient) SyncDir(sourceDir, destDir string, sourceIsRemote bool, 
 		if !strings.HasPrefix(filepath.ToSlash(sourceDir), f.siteRoot+"/") && filepath.ToSlash(sourceDir) != f.siteRoot {
 			return fmt.Errorf("fake ssh: sourceDir is not a remote site path: %s", sourceDir)
 		}
-		return f.downloadTree(f.resolveRemote(sourceDir), destDir, func(name string) bool {
-			base := filepath.Base(name)
-			for _, e := range excludes {
-				if e != "" {
-					if matched, _ := filepath.Match(e, base); matched {
-						return true
-					}
-				}
-			}
-			return false
-		}, onFile)
+		return f.downloadTree(f.resolveRemote(sourceDir), destDir, fakeExcludeMatcher(excludes), onFile)
 	}
 
 	destIsRemote := strings.HasPrefix(filepath.ToSlash(destDir), f.siteRoot+"/") || filepath.ToSlash(destDir) == f.siteRoot
@@ -265,22 +259,38 @@ func (f *fakeSSHClient) SyncDir(sourceDir, destDir string, sourceIsRemote bool, 
 		return fmt.Errorf("fake ssh: destDir is not a remote site path: %s", destDir)
 	}
 
-	excludeSet := make(map[string]bool)
+	return f.uploadTree(sourceDir, f.resolveRemote(destDir), fakeExcludeMatcher(excludes), delete, onFile)
+}
+
+func fakeExcludeMatcher(excludes []string) func(string) bool {
+	var patterns []string
 	for _, e := range excludes {
+		e = strings.TrimSpace(filepath.ToSlash(e))
+		e = strings.TrimPrefix(e, "./")
+		e = strings.TrimSuffix(e, "/")
 		if e != "" {
-			excludeSet[e] = true
+			patterns = append(patterns, e)
 		}
 	}
-	isExcluded := func(name string) bool {
-		base := filepath.Base(name)
-		for e := range excludeSet {
-			if matched, _ := filepath.Match(e, base); matched {
+	return func(name string) bool {
+		name = strings.TrimPrefix(filepath.ToSlash(name), "./")
+		name = strings.TrimSuffix(name, "/")
+		for _, pattern := range patterns {
+			if name == pattern || strings.HasPrefix(name, pattern+"/") {
+				return true
+			}
+			if strings.Contains(pattern, "/") {
+				if matched, _ := path.Match(pattern, name); matched {
+					return true
+				}
+				continue
+			}
+			if matched, _ := path.Match(pattern, path.Base(name)); matched {
 				return true
 			}
 		}
 		return false
 	}
-	return f.uploadTree(sourceDir, f.resolveRemote(destDir), isExcluded, delete, onFile)
 }
 
 func (f *fakeSSHClient) downloadTree(srcDir, destDir string, isExcluded func(string) bool, onFile func(string)) error {

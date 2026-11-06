@@ -46,10 +46,12 @@ const (
 )
 
 type Manager struct {
-	DataDir       string
-	BuildContext  string
-	Database      *db.Database
-	wpRunner      func(args ...string) (string, error)
+	DataDir      string
+	BuildContext string
+	Database     *db.Database
+	wpRunner     func(args ...string) (string, error)
+
+	netMu         sync.Mutex
 	connectedOnce bool
 
 	startMu sync.Mutex
@@ -112,6 +114,12 @@ func (s *logStream) subscribe() (lines []string, ch <-chan map[string]interface{
 	sub := make(chan map[string]interface{}, 64)
 	s.subs = append(s.subs, sub)
 	return lines, sub, false
+}
+
+func (s *logStream) wasSuccessful() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.success
 }
 
 type State struct {
@@ -237,7 +245,10 @@ func (m *Manager) apiContainerID() string {
 // when the connection is torn down in Stop or the process restarts, so the
 // connection is transparently re-established after an API container recreate.
 func (m *Manager) ConnectToNetwork() error {
-	if m.connectedOnce {
+	m.netMu.Lock()
+	connected := m.connectedOnce
+	m.netMu.Unlock()
+	if connected {
 		return nil
 	}
 	cid := m.apiContainerID()
@@ -254,12 +265,16 @@ func (m *Manager) ConnectToNetwork() error {
 	if err != nil {
 		msg := string(out)
 		if strings.Contains(msg, "already exists") || strings.Contains(msg, "is already") {
+			m.netMu.Lock()
 			m.connectedOnce = true
+			m.netMu.Unlock()
 			return nil
 		}
 		return fmt.Errorf("failed to connect API container to sandbox network: %w\n%s", err, msg)
 	}
+	m.netMu.Lock()
 	m.connectedOnce = true
+	m.netMu.Unlock()
 	log.Printf("sandbox: connected API container %s to network %s", cid, netName)
 	return nil
 }
@@ -267,7 +282,9 @@ func (m *Manager) ConnectToNetwork() error {
 // disconnectAPIFromNetwork detaches the API container from the sandbox network
 // so that `docker compose down -v` can remove it. No-op when running on the host.
 func (m *Manager) disconnectAPIFromNetwork() {
+	m.netMu.Lock()
 	m.connectedOnce = false
+	m.netMu.Unlock()
 	cid := m.apiContainerID()
 	if cid == "" {
 		return
@@ -471,7 +488,9 @@ func (m *Manager) Start(publicBase string) (ret *Status, err error) {
 		return nil, err
 	}
 	startLog("connecting the API server to the sandbox network")
+	m.netMu.Lock()
 	m.connectedOnce = false
+	m.netMu.Unlock()
 	if err := m.ConnectToNetwork(); err != nil {
 		return nil, err
 	}
@@ -574,7 +593,7 @@ func (m *Manager) StreamStartLogs(w http.ResponseWriter, r *http.Request) error 
 		}
 	}
 	if done {
-		return writeEvent(map[string]interface{}{"done": true, "success": stream.success})
+		return writeEvent(map[string]interface{}{"done": true, "success": stream.wasSuccessful()})
 	}
 
 	for {

@@ -1,6 +1,7 @@
 package db
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -14,13 +15,21 @@ import (
 
 const encryptedV1Prefix = "enc:v1:"
 
+// legacyEncryptionKey is the key used by versions that did not configure an
+// encryption key. It is only consulted when decrypting existing values so
+// upgrades can still read old data.
+func legacyEncryptionKey() []byte {
+	sum := sha256.Sum256([]byte("default-secret-key"))
+	return sum[:]
+}
+
 func encryptionKey() []byte {
 	key := os.Getenv("DATA_ENCRYPTION_KEY")
 	if key == "" {
 		key = os.Getenv("SECRET_KEY")
 	}
 	if key == "" {
-		key = "default-secret-key"
+		return legacyEncryptionKey()
 	}
 	sum := sha256.Sum256([]byte(key))
 	return sum[:]
@@ -61,28 +70,36 @@ func decryptSensitive(value string) (string, error) {
 		return "", fmt.Errorf("failed to decode encrypted value: %w", err)
 	}
 
-	block, err := aes.NewCipher(encryptionKey())
-	if err != nil {
-		return "", fmt.Errorf("failed to initialize cipher: %w", err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", fmt.Errorf("failed to initialize gcm: %w", err)
+	keys := [][]byte{encryptionKey()}
+	legacyKey := legacyEncryptionKey()
+	if !bytes.Equal(keys[0], legacyKey) {
+		keys = append(keys, legacyKey)
 	}
 
-	nonceSize := gcm.NonceSize()
-	if len(payload) < nonceSize {
-		return "", fmt.Errorf("encrypted payload too short")
+	var lastErr error
+	for _, key := range keys {
+		block, err := aes.NewCipher(key)
+		if err != nil {
+			return "", fmt.Errorf("failed to initialize cipher: %w", err)
+		}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return "", fmt.Errorf("failed to initialize gcm: %w", err)
+		}
+
+		nonceSize := gcm.NonceSize()
+		if len(payload) < nonceSize {
+			return "", fmt.Errorf("encrypted payload too short")
+		}
+
+		plain, err := gcm.Open(nil, payload[:nonceSize], payload[nonceSize:], nil)
+		if err == nil {
+			return string(plain), nil
+		}
+		lastErr = err
 	}
 
-	nonce := payload[:nonceSize]
-	ciphertext := payload[nonceSize:]
-	plain, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", fmt.Errorf("failed to decrypt value: %w", err)
-	}
-
-	return string(plain), nil
+	return "", fmt.Errorf("failed to decrypt value: %w", lastErr)
 }
 
 func encryptSiteSensitiveFields(site *Site) error {

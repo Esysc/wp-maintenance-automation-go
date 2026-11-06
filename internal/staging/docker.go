@@ -1,7 +1,11 @@
 package staging
 
 import (
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -55,7 +59,17 @@ func (m *Manager) Create(snapshotID string, rc *restic.ResticClient) (*StagingEn
 	return m.CreateWithPublicHost(snapshotID, rc, "")
 }
 
+// removeWPConfigConstantsScript removes active WP_HOME and WP_SITEURL
+// definitions from wp-config.php (in both quote styles) so the staging URL
+// stored in the database takes effect. Commented-out definitions are kept.
+const removeWPConfigConstantsScript = `/^[[:space:]]*define[[:space:]]*([[:space:]]*['"]WP_\(HOME\|SITEURL\)['"]/d`
+
 func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClient, publicHost string) (*StagingEnv, error) {
+	snapshotID = strings.TrimSpace(snapshotID)
+	if snapshotID == "" {
+		return nil, fmt.Errorf("snapshot ID is required")
+	}
+
 	restoreDir, err := os.MkdirTemp("", "wpmaintenance-staging-*")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create staging restore dir: %w", err)
@@ -64,7 +78,7 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	env := &StagingEnv{
 		SnapshotID:   snapshotID,
 		RestoreDir:   restoreDir,
-		ProjectName:  "wps-" + snapshotID[:8],
+		ProjectName:  stagingProjectName(snapshotID),
 		PublicHost:   strings.TrimSpace(publicHost),
 		BuildContext: m.buildContext,
 	}
@@ -122,16 +136,19 @@ func (m *Manager) CreateWithPublicHost(snapshotID string, rc *restic.ResticClien
 	}
 
 	// Remove WP_HOME and WP_SITEURL constants from wp-config.php so they
-	// don't override the database values we set in updateSiteURL()
+	// don't override the database values we set in updateSiteURL().
 	removeConstCmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
 		"-p", env.ProjectName,
 		"exec", "-T", "wp", "sed", "-i",
-		"/^define(.WP_HOME./d;/^define(.WP_SITEURL./d",
+		removeWPConfigConstantsScript,
 		"/var/www/html/wp-config.php",
 	)
 	removeConstCmd.Env = os.Environ()
-	removeConstCmd.CombinedOutput()
+	if out, err := removeConstCmd.CombinedOutput(); err != nil {
+		env.cleanup(false)
+		return nil, fmt.Errorf("failed to remove WP_HOME/WP_SITEURL constants: %w\nOutput: %s", err, string(out))
+	}
 
 	if err := env.readTablePrefix(); err != nil {
 		env.cleanup(false)
@@ -300,8 +317,10 @@ func (env *StagingEnv) waitForDB() error {
 
 func (env *StagingEnv) createUser() error {
 	createSQL := fmt.Sprintf(
-		"CREATE DATABASE IF NOT EXISTS `%s`; CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'; GRANT ALL ON `%s`.* TO '%s'@'%%'; FLUSH PRIVILEGES;",
-		env.DBName, env.DBUser, env.DBPassword, env.DBName, env.DBUser,
+		"CREATE DATABASE IF NOT EXISTS %s; CREATE USER IF NOT EXISTS %s@'%%' IDENTIFIED BY %s; GRANT ALL ON %s.* TO %s@'%%'; FLUSH PRIVILEGES;",
+		quoteMySQLIdentifier(env.DBName),
+		quoteMySQLString(env.DBUser), quoteMySQLString(env.DBPassword),
+		quoteMySQLIdentifier(env.DBName), quoteMySQLString(env.DBUser),
 	)
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -348,41 +367,28 @@ func (env *StagingEnv) importDB() error {
 		"-u", "root", "-prootpass", env.DBName,
 	}
 
-	if strings.HasSuffix(dumpFile, ".gz") {
-		gunzip := exec.Command("gunzip", "-c", dumpFile)
-		mysql := exec.Command("docker", mysqlArgs...)
-		mysql.Env = os.Environ()
-		mysql.Stdin, _ = gunzip.StdoutPipe()
+	f, err := os.Open(dumpFile)
+	if err != nil {
+		return fmt.Errorf("failed to open database dump: %w", err)
+	}
+	defer f.Close()
 
-		if err := gunzip.Start(); err != nil {
-			return fmt.Errorf("gunzip start failed: %w", err)
+	var reader io.Reader = f
+	if strings.HasSuffix(dumpFile, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return fmt.Errorf("failed to open gzipped database dump: %w", err)
 		}
-		if err := mysql.Start(); err != nil {
-			gunzip.Process.Kill()
-			return fmt.Errorf("mysql start failed: %w", err)
-		}
-		gunzip.Wait()
-		if err := mysql.Wait(); err != nil {
-			return fmt.Errorf("mysql import failed: %w", err)
-		}
-		return nil
+		defer gz.Close()
+		reader = gz
 	}
 
-	cat := exec.Command("cat", dumpFile)
 	mysql := exec.Command("docker", mysqlArgs...)
 	mysql.Env = os.Environ()
-	mysql.Stdin, _ = cat.StdoutPipe()
+	mysql.Stdin = reader
 
-	if err := cat.Start(); err != nil {
-		return fmt.Errorf("cat start failed: %w", err)
-	}
-	if err := mysql.Start(); err != nil {
-		cat.Process.Kill()
-		return fmt.Errorf("mysql start failed: %w", err)
-	}
-	cat.Wait()
-	if err := mysql.Wait(); err != nil {
-		return fmt.Errorf("mysql import failed: %w", err)
+	if output, err := mysql.CombinedOutput(); err != nil {
+		return fmt.Errorf("mysql import failed: %w\nOutput: %s", err, string(output))
 	}
 	return nil
 }
@@ -470,7 +476,7 @@ func (env *StagingEnv) readTablePrefix() error {
 		return nil
 	}
 
-	re := regexp.MustCompile(`table_prefix\s*=\s*'([^']*)'`)
+	re := regexp.MustCompile(`table_prefix\s*=\s*['"]([^'"]*)['"]`)
 	matches := re.FindSubmatch(data)
 	if len(matches) < 2 {
 		env.TablePrefix = "wp_"
@@ -482,7 +488,10 @@ func (env *StagingEnv) readTablePrefix() error {
 }
 
 func (env *StagingEnv) updateSiteURL() error {
-	prefixSQL := strings.ReplaceAll(env.TablePrefix, "`", "")
+	prefixSQL := strings.TrimSpace(env.TablePrefix)
+	if prefixSQL == "" {
+		prefixSQL = "wp_"
+	}
 
 	oldURL, _ := env.getSiteURL()
 	log.Printf("staging: getSiteURL returned '%s' (db=%s, prefix=%s)", oldURL, env.DBName, prefixSQL)
@@ -495,8 +504,8 @@ func (env *StagingEnv) updateSiteURL() error {
 	log.Printf("staging: newURL='%s'", newURL)
 
 	updateSQL := fmt.Sprintf(
-		"UPDATE `%s`.`%soptions` SET option_value='%s' WHERE option_name IN ('siteurl','home')",
-		env.DBName, prefixSQL, newURL,
+		"UPDATE %s.%s SET option_value=%s WHERE option_name IN ('siteurl','home')",
+		quoteMySQLIdentifier(env.DBName), quoteMySQLIdentifier(prefixSQL+"options"), quoteMySQLString(newURL),
 	)
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -638,10 +647,13 @@ func (env *StagingEnv) updateSiteURL() error {
 }
 
 func (env *StagingEnv) getSiteURL() (string, error) {
-	prefixSQL := strings.ReplaceAll(env.TablePrefix, "`", "")
+	prefixSQL := strings.TrimSpace(env.TablePrefix)
+	if prefixSQL == "" {
+		prefixSQL = "wp_"
+	}
 	selectSQL := fmt.Sprintf(
-		"SELECT option_value FROM `%s`.`%soptions` WHERE option_name='siteurl' LIMIT 1",
-		env.DBName, prefixSQL,
+		"SELECT option_value FROM %s.%s WHERE option_name='siteurl' LIMIT 1",
+		quoteMySQLIdentifier(env.DBName), quoteMySQLIdentifier(prefixSQL+"options"),
 	)
 	cmd := exec.Command("docker", "compose",
 		"-f", env.ComposeFile,
@@ -773,10 +785,46 @@ func findFile(root, pattern string) string {
 	return ""
 }
 
-var wpVersionRe = regexp.MustCompile(`wp_version\s*=\s*'([^']+)'`)
-var dbNameRe = regexp.MustCompile(`define\s*\(\s*'DB_NAME'\s*,\s*'([^']+)'`)
-var dbUserRe = regexp.MustCompile(`define\s*\(\s*'DB_USER'\s*,\s*'([^']+)'`)
-var dbPassRe = regexp.MustCompile(`define\s*\(\s*'DB_PASSWORD'\s*,\s*'([^']+)'`)
+var wpVersionRe = regexp.MustCompile(`wp_version\s*=\s*['"]([^'"]+)['"]`)
+var dbNameRe = regexp.MustCompile(`define\s*\(\s*['"]DB_NAME['"]\s*,\s*['"]([^'"]+)['"]`)
+var dbUserRe = regexp.MustCompile(`define\s*\(\s*['"]DB_USER['"]\s*,\s*['"]([^'"]+)['"]`)
+var dbPassRe = regexp.MustCompile(`define\s*\(\s*['"]DB_PASSWORD['"]\s*,\s*['"]([^'"]+)['"]`)
+
+// stagingProjectName builds a Docker Compose project name from a snapshot ID.
+// It never slices the raw ID, so short or non-hex IDs cannot panic or produce
+// an invalid project name.
+func stagingProjectName(snapshotID string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(strings.TrimSpace(snapshotID)) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	suffix := b.String()
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	if suffix == "" {
+		sum := sha256.Sum256([]byte(snapshotID))
+		suffix = hex.EncodeToString(sum[:4])
+	}
+	return "wps-" + suffix
+}
+
+func quoteMySQLIdentifier(value string) string {
+	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
+}
+
+func quoteMySQLString(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		"'", "''",
+		"\x00", `\0`,
+		"\n", `\n`,
+		"\r", `\r`,
+	)
+	return "'" + replacer.Replace(value) + "'"
+}
 
 func (env *StagingEnv) detectVersions(restoreDir string) error {
 	wpDir := findDir(restoreDir, "wp")

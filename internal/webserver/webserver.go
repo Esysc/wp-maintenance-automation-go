@@ -117,6 +117,7 @@ func Run() {
 	mux.HandleFunc("/ui/", s.handleUISPA)
 	mux.HandleFunc("/ui", s.handleUISPA)
 	mux.HandleFunc("/sandbox-site/", s.handleSandboxSite)
+	mux.HandleFunc("/rehearsal-site/", s.authMiddleware(s.handleAPISiteProxy))
 
 	tlsDisable := os.Getenv("WEB_TLS_DISABLE")
 
@@ -483,6 +484,12 @@ func (s *WebServer) forwardedHeaders(apiReq *http.Request, r *http.Request) {
 // serves the sandbox WordPress site over the Docker-internal network. This
 // lets the browser open the sandbox site through the application's own URL.
 func (s *WebServer) handleSandboxSite(w http.ResponseWriter, r *http.Request) {
+	s.handleAPISiteProxy(w, r)
+}
+
+// handleAPISiteProxy forwards a site preview path to the API server while
+// preserving the path and browser authentication.
+func (s *WebServer) handleAPISiteProxy(w http.ResponseWriter, r *http.Request) {
 	apiURL, err := url.Parse(s.apiBaseURL)
 	if err != nil {
 		http.Error(w, "invalid api url", http.StatusInternalServerError)

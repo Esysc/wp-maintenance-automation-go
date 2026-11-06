@@ -277,6 +277,8 @@
   "rehearsal_failed": "O ensaio falhou",
   "rehearsal_running_title": "Ensaio ativo",
   "rehearsal_health_url": "URL de staging",
+  "rehearsal_preview_title": "Pré-visualização do site de ensaio",
+  "rehearsal_open_in_tab": "Abrir em uma nova aba",
   "rehearsal_stop_confirm": "Parar este ensaio e destruir o contêiner de staging?",
   "rehearsal_stop_title": "Parar ensaio",
   "rehearsal_stopped": "Ensaio parado",

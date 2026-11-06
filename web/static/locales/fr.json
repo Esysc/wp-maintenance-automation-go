@@ -277,6 +277,8 @@
   "rehearsal_failed": "La répétition a échoué",
   "rehearsal_running_title": "Répétition active",
   "rehearsal_health_url": "URL de préproduction",
+  "rehearsal_preview_title": "Aperçu du site de répétition",
+  "rehearsal_open_in_tab": "Ouvrir dans un nouvel onglet",
   "rehearsal_stop_confirm": "Arrêter cette répétition et détruire le conteneur de préproduction ?",
   "rehearsal_stop_title": "Arrêter la répétition",
   "rehearsal_stopped": "Répétition arrêtée",

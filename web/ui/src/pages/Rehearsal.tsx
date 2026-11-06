@@ -10,6 +10,7 @@ import { useLanguage } from '../context/LanguageContext'
 
 interface RehearsalEnv {
   health_url: string
+  preview_url?: string
   wp_version: string
   db_name: string
   snapshot_id: string
@@ -417,6 +418,22 @@ export default function Rehearsal() {
               </div>
             )}
           </div>
+
+          {env.preview_url && envActive && (
+            <div className="card" style={{ marginTop: 16 }}>
+              <h3>{t('rehearsal_preview_title')}</h3>
+              <p>
+                <a href={env.preview_url} target="_blank" rel="noopener">
+                  {t('rehearsal_open_in_tab')}
+                </a>
+              </p>
+              <iframe
+                src={env.preview_url}
+                title={t('rehearsal_preview_title')}
+                style={{ width: '100%', height: '70vh', border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
+              />
+            </div>
+          )}
 
           {renderStepBlock('Upgrade Stage Steps', env.upgrade_steps)}
           {renderStepBlock('Rollback Stage Steps', env.rollback_steps)}

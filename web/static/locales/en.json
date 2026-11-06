@@ -220,6 +220,8 @@
   "rehearsal_failed": "Rehearsal failed",
   "rehearsal_running_title": "Active Rehearsal",
   "rehearsal_health_url": "Staging URL",
+  "rehearsal_preview_title": "Rehearsal site preview",
+  "rehearsal_open_in_tab": "Open in new tab",
   "rehearsal_stop_confirm": "Stop this rehearsal and destroy the staging container?",
   "rehearsal_stop_title": "Stop Rehearsal",
   "rehearsal_stopped": "Rehearsal stopped",

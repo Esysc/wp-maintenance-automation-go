@@ -33,6 +33,7 @@ type jobRequest struct {
 	ApplyFiles     bool   `json:"apply_files"`
 	Confirm        bool   `json:"confirm"`
 	PublicHost     string `json:"public_host,omitempty"`
+	PublicBaseURL  string `json:"public_base_url,omitempty"`
 }
 
 func forwardedPublicHost(r *http.Request) string {
@@ -49,6 +50,26 @@ func forwardedPublicHost(r *http.Request) string {
 		}
 	}
 	return host
+}
+
+func forwardedPublicBaseURL(r *http.Request) string {
+	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if proto == "" {
+		if r.TLS != nil {
+			proto = "https"
+		} else {
+			proto = "http"
+		}
+	}
+
+	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = strings.TrimSpace(r.Host)
+	}
+	if host == "" {
+		return ""
+	}
+	return strings.TrimRight(proto+"://"+host, "/")
 }
 
 func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) {
@@ -914,9 +935,20 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
+		previewURL := ""
+		if base := strings.TrimRight(strings.TrimSpace(tuple.req.PublicBaseURL), "/"); base != "" {
+			candidate := base + "/rehearsal-site/" + job.ID
+			if err := rolledBackEnv.SetSiteURL(candidate); err != nil {
+				log.Printf("rehearsal: failed to enable embedded preview: %v", err)
+			} else {
+				previewURL = candidate
+			}
+		}
+
 		setStatus("running", "Staging environment ready", 96)
 		resultJSON, _ := json.Marshal(map[string]interface{}{
 			"health_url":         rolledBackEnv.HealthURL,
+			"preview_url":        previewURL,
 			"compose_file":       rolledBackEnv.ComposeFile,
 			"project_name":       rolledBackEnv.ProjectName,
 			"restore_dir":        rolledBackEnv.RestoreDir,

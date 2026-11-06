@@ -277,6 +277,8 @@
   "rehearsal_failed": "演练失败",
   "rehearsal_running_title": "进行中的演练",
   "rehearsal_health_url": "预发布 URL",
+  "rehearsal_preview_title": "演练站点预览",
+  "rehearsal_open_in_tab": "在新标签页中打开",
   "rehearsal_stop_confirm": "停止此演练并销毁预发布容器？",
   "rehearsal_stop_title": "停止演练",
   "rehearsal_stopped": "演练已停止",

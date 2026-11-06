@@ -278,6 +278,8 @@
   "rehearsal_failed": "Prova non riuscita",
   "rehearsal_running_title": "Prova attiva",
   "rehearsal_health_url": "URL di staging",
+  "rehearsal_preview_title": "Anteprima del sito di prova",
+  "rehearsal_open_in_tab": "Apri in una nuova scheda",
   "rehearsal_stop_confirm": "Fermare questa prova ed eliminare il container di staging?",
   "rehearsal_stop_title": "Ferma prova",
   "rehearsal_stopped": "Prova fermata",

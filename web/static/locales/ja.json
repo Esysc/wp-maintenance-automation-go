@@ -277,6 +277,8 @@
   "rehearsal_failed": "リハーサルに失敗しました",
   "rehearsal_running_title": "実行中のリハーサル",
   "rehearsal_health_url": "ステージング URL",
+  "rehearsal_preview_title": "リハーサルサイトのプレビュー",
+  "rehearsal_open_in_tab": "新しいタブで開く",
   "rehearsal_stop_confirm": "このリハーサルを停止してステージングコンテナを破棄しますか？",
   "rehearsal_stop_title": "リハーサルを停止",
   "rehearsal_stopped": "リハーサルを停止しました",

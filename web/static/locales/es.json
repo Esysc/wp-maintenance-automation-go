@@ -277,6 +277,8 @@
   "rehearsal_failed": "El ensayo falló",
   "rehearsal_running_title": "Ensayo activo",
   "rehearsal_health_url": "URL del entorno de pruebas",
+  "rehearsal_preview_title": "Vista previa del sitio de ensayo",
+  "rehearsal_open_in_tab": "Abrir en una pestaña nueva",
   "rehearsal_stop_confirm": "¿Detener este ensayo y destruir el contenedor del entorno de pruebas?",
   "rehearsal_stop_title": "Detener ensayo",
   "rehearsal_stopped": "Ensayo detenido",

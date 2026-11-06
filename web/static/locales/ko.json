@@ -277,6 +277,8 @@
   "rehearsal_failed": "리허설 실패",
   "rehearsal_running_title": "진행 중인 리허설",
   "rehearsal_health_url": "스테이징 URL",
+  "rehearsal_preview_title": "리허설 사이트 미리보기",
+  "rehearsal_open_in_tab": "새 탭에서 열기",
   "rehearsal_stop_confirm": "이 리허설을 중지하고 스테이징 컨테이너를 삭제하시겠습니까?",
   "rehearsal_stop_title": "리허설 중지",
   "rehearsal_stopped": "리허설이 중지되었습니다",

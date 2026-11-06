@@ -2,11 +2,14 @@ package apiserver
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"strings"
 	"time"
 
@@ -1067,6 +1070,7 @@ func (s *APIServer) handleRehearsal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.PublicHost = forwardedPublicHost(r)
+	req.PublicBaseURL = forwardedPublicBaseURL(r)
 
 	job, err := s.enqueueJob("rehearsal", req)
 	if err != nil {
@@ -1176,6 +1180,105 @@ func (s *APIServer) handleRehearsalActive(w http.ResponseWriter, r *http.Request
 		"active": true,
 		"env":    envData,
 	})
+}
+
+// handleRehearsalSite proxies the running rehearsal site through the
+// application so it can be embedded in the Rehearsal page with the same
+// origin, TLS certificate, and authentication as the main UI.
+func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/rehearsal-site/")
+	jobID, targetPath, hasSlash := strings.Cut(rest, "/")
+	if jobID == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if !hasSlash {
+		target := r.URL.Path + "/"
+		if r.URL.RawQuery != "" {
+			target += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, target, http.StatusTemporaryRedirect)
+		return
+	}
+
+	job, err := s.Database.GetJob(jobID)
+	if err != nil || job == nil || strings.TrimSpace(job.Result) == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var envData struct {
+		HealthURL  string `json:"health_url"`
+		PreviewURL string `json:"preview_url"`
+	}
+	if err := json.Unmarshal([]byte(job.Result), &envData); err != nil || envData.HealthURL == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	targetURL, err := url.Parse(envData.HealthURL)
+	if err != nil {
+		http.Error(w, "invalid rehearsal target", http.StatusInternalServerError)
+		return
+	}
+
+	forwardPath := "/"
+	if targetPath != "" {
+		forwardPath = "/" + targetPath
+	}
+	previewPrefix := "/rehearsal-site/" + jobID
+
+	proxy := &httputil.ReverseProxy{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		},
+		Director: func(req *http.Request) {
+			req.URL.Scheme = targetURL.Scheme
+			req.URL.Host = targetURL.Host
+			req.URL.Path = forwardPath
+			req.URL.RawQuery = r.URL.RawQuery
+			if host := r.Header.Get("X-Forwarded-Host"); host != "" {
+				req.Host = host
+			} else {
+				req.Host = r.Host
+			}
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			resp.Header.Del("X-Frame-Options")
+			if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
+				resp.Header.Set("Content-Security-Policy", removeCSPDirective(csp, "frame-ancestors"))
+			}
+			if location := resp.Header.Get("Location"); location != "" {
+				resp.Header.Set("Location", rewriteRehearsalLocation(location, envData.HealthURL, previewPrefix))
+			}
+			return nil
+		},
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func removeCSPDirective(csp, directive string) string {
+	parts := strings.Split(csp, ";")
+	kept := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(part), strings.ToLower(directive)) {
+			continue
+		}
+		kept = append(kept, part)
+	}
+	return strings.Join(kept, "; ")
+}
+
+func rewriteRehearsalLocation(location, directBase, previewPrefix string) string {
+	directBase = strings.TrimRight(directBase, "/")
+	if strings.HasPrefix(location, directBase) {
+		return previewPrefix + strings.TrimPrefix(location, directBase)
+	}
+	return location
 }
 
 func (s *APIServer) handleRehearsalByID(w http.ResponseWriter, r *http.Request) {

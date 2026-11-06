@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,6 +18,7 @@ import (
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/auth"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/db"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/restic"
+	"github.com/andreacristalli/wp-maintenance-automation-go/internal/security"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/ssh"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/staging"
 	"github.com/andreacristalli/wp-maintenance-automation-go/internal/upgrade"
@@ -871,6 +873,26 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			})
 		}
 
+		setStatus("running", "Running security review on upgraded rehearsal environment...", 84)
+		scanCtx, cancelScan := context.WithTimeout(context.Background(), 60*time.Second)
+		securityReport, securityErr := security.Scan(scanCtx, env.HealthURL, security.Options{Timeout: 8 * time.Second})
+		cancelScan()
+		if securityErr != nil {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "security review",
+				Command: "security scan",
+				Output:  securityErr.Error(),
+				Success: false,
+			})
+		} else {
+			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
+				Name:    "security review",
+				Command: "security scan",
+				Output:  securityReport.Summary(),
+				Success: true,
+			})
+		}
+
 		inventoryAfter, err := collectRehearsalInventory(env)
 		if err != nil {
 			setError("failed to collect upgraded rehearsal inventory: " + err.Error())
@@ -938,6 +960,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			"inventory_before":   inventoryBefore,
 			"inventory_after":    inventoryAfter,
 			"inventory_rollback": inventoryRollback,
+			"security_report":    securityReport,
 		})
 		setResult(string(resultJSON))
 

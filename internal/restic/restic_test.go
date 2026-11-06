@@ -111,6 +111,38 @@ func TestTryParseSnapshot(t *testing.T) {
 	}
 }
 
+func TestIsResticLockError(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{
+			name:   "already locked",
+			output: "repo already locked, waiting up to 0s for the lock\nunable to create lock in backend: repository is already locked",
+			want:   true,
+		},
+		{
+			name:   "unable to create lock",
+			output: "unable to create lock in backend: permission denied",
+			want:   true,
+		},
+		{
+			name:   "unrelated failure",
+			output: "Fatal: unable to open config file",
+			want:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isResticLockError(tt.output); got != tt.want {
+				t.Fatalf("isResticLockError(%q) = %v, want %v", tt.output, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestNewClient(t *testing.T) {
 	t.Run("missing password file", func(t *testing.T) {
 		_, err := NewClient("/repo", filepath.Join(t.TempDir(), "missing"))

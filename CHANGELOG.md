@@ -16,6 +16,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Rehearsal upgrade steps skip loading plugins and themes while updating, so one incompatible plugin cannot abort the whole stage before the healthcheck reports the real problem. A failed rehearsal healthcheck is now reported as a failure instead of being silently followed by a successful result.
 - Deleting a backup now also forgets its restic snapshot, so deleted backups no longer linger in the rehearsal snapshot picker.
 - The web proxy now keeps the snapshot ID when forwarding `/api/v1/snapshots/<id>` requests, fixing `405 Method Not Allowed` errors when deleting a snapshot from the UI.
+- Restic deletions now detect stale repository locks, run `restic unlock`, and retry the forget operation instead of returning a 500.
 
 ## [0.5.3] - 2026-11-06
 

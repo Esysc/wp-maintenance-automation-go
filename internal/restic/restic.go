@@ -150,11 +150,25 @@ func (r *ResticClient) Forget(flags ...string) error {
 	cmd.Env = os.Environ()
 
 	output, err := cmd.CombinedOutput()
+	if err != nil && isResticLockError(string(output)) {
+		// A stale lock from an interrupted backup/restore can block forget
+		// indefinitely. restic only removes stale locks, so retrying is safe.
+		if unlockErr := r.Unlock(); unlockErr == nil {
+			cmd = r.newCmd(args...)
+			cmd.Env = os.Environ()
+			output, err = cmd.CombinedOutput()
+		}
+	}
 	if err != nil {
 		return fmt.Errorf("restic forget failed: %w\nOutput: %s", err, string(output))
 	}
 
 	return nil
+}
+
+func isResticLockError(output string) bool {
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "already locked") || strings.Contains(lower, "unable to create lock")
 }
 
 func (r *ResticClient) Check(readDataSubset string) error {

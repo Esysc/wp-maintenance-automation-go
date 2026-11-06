@@ -1073,7 +1073,6 @@ func (s *APIServer) handleRehearsal(w http.ResponseWriter, r *http.Request) {
 	}
 
 	req.PublicHost = forwardedPublicHost(r)
-	req.PublicBaseURL = forwardedPublicBaseURL(r)
 
 	job, err := s.enqueueJob("rehearsal", req)
 	if err != nil {

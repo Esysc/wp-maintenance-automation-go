@@ -33,7 +33,6 @@ type jobRequest struct {
 	ApplyFiles     bool   `json:"apply_files"`
 	Confirm        bool   `json:"confirm"`
 	PublicHost     string `json:"public_host,omitempty"`
-	PublicBaseURL  string `json:"public_base_url,omitempty"`
 }
 
 func forwardedPublicHost(r *http.Request) string {
@@ -50,26 +49,6 @@ func forwardedPublicHost(r *http.Request) string {
 		}
 	}
 	return host
-}
-
-func forwardedPublicBaseURL(r *http.Request) string {
-	proto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
-	if proto == "" {
-		if r.TLS != nil {
-			proto = "https"
-		} else {
-			proto = "http"
-		}
-	}
-
-	host := strings.TrimSpace(r.Header.Get("X-Forwarded-Host"))
-	if host == "" {
-		host = strings.TrimSpace(r.Host)
-	}
-	if host == "" {
-		return ""
-	}
-	return strings.TrimRight(proto+"://"+host, "/")
 }
 
 func (s *APIServer) enqueueJob(jobType string, req jobRequest) (*db.Job, error) {
@@ -935,10 +914,7 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 			return
 		}
 
-		previewURL := ""
-		if base := strings.TrimRight(strings.TrimSpace(tuple.req.PublicBaseURL), "/"); base != "" {
-			previewURL = base + "/rehearsal-site/" + job.ID
-		}
+		previewURL := "/rehearsal-site/" + job.ID + "/"
 
 		setStatus("running", "Staging environment ready", 96)
 		proxyHost := rolledBackEnv.PublicHost

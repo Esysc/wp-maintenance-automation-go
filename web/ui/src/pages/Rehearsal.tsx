@@ -63,6 +63,15 @@ interface ResticSnapshot {
   tags: string[]
 }
 
+function previewPath(url: string): string {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    return parsed.pathname + parsed.search
+  } catch {
+    return url
+  }
+}
+
 export default function Rehearsal() {
   const { siteId, setSiteId } = useSite()
   const [snapshots, setSnapshots] = useState<ResticSnapshot[]>([])
@@ -423,12 +432,12 @@ export default function Rehearsal() {
             <div className="card" style={{ marginTop: 16 }}>
               <h3>{t('rehearsal_preview_title')}</h3>
               <p>
-                <a href={env.preview_url} target="_blank" rel="noopener">
+                <a href={previewPath(env.preview_url)} target="_blank" rel="noopener">
                   {t('rehearsal_open_in_tab')}
                 </a>
               </p>
               <iframe
-                src={env.preview_url}
+                src={previewPath(env.preview_url)}
                 title={t('rehearsal_preview_title')}
                 style={{ width: '100%', height: '70vh', border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
               />

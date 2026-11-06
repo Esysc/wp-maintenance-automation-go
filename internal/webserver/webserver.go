@@ -401,6 +401,12 @@ func (s *WebServer) handleAPISites(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *WebServer) handleAPISnapshots(w http.ResponseWriter, r *http.Request) {
+	// Preserve the snapshot ID for detail/delete requests. The legacy
+	// /api/snapshots route has no ID form and maps to the v1 collection.
+	if strings.HasPrefix(r.URL.Path, "/api/v1/snapshots/") {
+		s.proxyRequest(w, r, r.URL.Path)
+		return
+	}
 	s.proxyRequest(w, r, "/api/v1/snapshots")
 }
 

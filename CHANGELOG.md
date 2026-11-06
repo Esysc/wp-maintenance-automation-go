@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-11-06
+
 ### Security
 - Remote paths used by SSH file and WP-CLI helpers are now shell-quoted, preventing command injection through crafted paths.
 - SSH sync and restore now reject tar entries that use absolute paths or `..` traversal.

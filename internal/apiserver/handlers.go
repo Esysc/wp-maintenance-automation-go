@@ -1260,8 +1260,8 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del("X-Frame-Options")
-			if csp := resp.Header.Get("Content-Security-Policy"); csp != "" {
-				resp.Header.Set("Content-Security-Policy", removeCSPDirective(csp, "frame-ancestors"))
+			if isHTMLResponse(resp.Header.Get("Content-Type")) {
+				resp.Header.Set("Content-Security-Policy", rehearsalPreviewCSP(resp.Header.Get("Content-Security-Policy")))
 			}
 			for _, header := range []string{"Location", "Content-Location", "Link", "X-TEC-API-ROOT", "X-TEC-API-ORIGIN"} {
 				if value := resp.Header.Get(header); value != "" {
@@ -1272,11 +1272,26 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 			if !isTextResponse(resp.Header.Get("Content-Type")) {
 				return nil
 			}
-			body, err := io.ReadAll(resp.Body)
-			resp.Body.Close()
+			if resp.ContentLength > maxPreviewRewriteBody {
+				return nil
+			}
+			original := resp.Body
+			body, err := io.ReadAll(io.LimitReader(original, maxPreviewRewriteBody+1))
 			if err != nil {
+				original.Close()
 				return err
 			}
+			if int64(len(body)) > maxPreviewRewriteBody {
+				// Too large to rewrite in memory. Restore the response unchanged
+				// by streaming the bytes that were already read followed by the
+				// remainder of the original body.
+				resp.Body = struct {
+					io.Reader
+					io.Closer
+				}{io.MultiReader(bytes.NewReader(body), original), original}
+				return nil
+			}
+			original.Close()
 			rewritten := rewriteRehearsalOrigins(string(body), origins, previewPrefix)
 			resp.Body = io.NopCloser(bytes.NewReader([]byte(rewritten)))
 			resp.ContentLength = int64(len(rewritten))
@@ -1288,6 +1303,10 @@ func (s *APIServer) handleRehearsalSite(w http.ResponseWriter, r *http.Request) 
 	proxy.ServeHTTP(w, r)
 }
 
+// maxPreviewRewriteBody caps the amount of proxied content that is buffered
+// for URL rewriting. Larger responses are streamed through unchanged.
+const maxPreviewRewriteBody = 4 << 20
+
 func isTextResponse(contentType string) bool {
 	contentType = strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
 	switch contentType {
@@ -1298,7 +1317,29 @@ func isTextResponse(contentType string) bool {
 	return strings.HasPrefix(contentType, "text/")
 }
 
-// rewriteRehearsalOrigins rewrites the staging origin(s) back to the
+func isHTMLResponse(contentType string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.SplitN(contentType, ";", 2)[0]))
+	return mediaType == "text/html" || mediaType == "application/xhtml+xml"
+}
+
+// rehearsalPreviewCSP keeps the embedded preview on this origin while
+// preventing it from submitting forms or calling the application API.
+func rehearsalPreviewCSP(existing string) string {
+	csp := removeCSPDirective(existing, "frame-ancestors")
+	csp = removeCSPDirective(csp, "form-action")
+	csp = removeCSPDirective(csp, "connect-src")
+	csp = removeCSPDirective(csp, "sandbox")
+	directives := []string{
+		"sandbox allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox",
+		"frame-ancestors 'self'",
+		"form-action 'none'",
+		"connect-src 'none'",
+	}
+	if strings.TrimSpace(csp) != "" {
+		directives = append([]string{csp}, directives...)
+	}
+	return strings.Join(directives, "; ")
+} // rewriteRehearsalOrigins rewrites the staging origin(s) back to the
 // application preview prefix so the browser keeps using the same origin.
 func rewriteRehearsalOrigins(value string, origins []string, previewPrefix string) string {
 	for _, origin := range origins {

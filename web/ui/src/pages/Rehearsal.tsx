@@ -441,6 +441,8 @@ export default function Rehearsal() {
               <iframe
                 src={previewPath(env.preview_url)}
                 title={t('rehearsal_preview_title')}
+                sandbox="allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+                referrerPolicy="no-referrer"
                 style={{ width: '100%', height: '70vh', border: '1px solid #ddd', borderRadius: 8, background: '#fff' }}
               />
             </div>

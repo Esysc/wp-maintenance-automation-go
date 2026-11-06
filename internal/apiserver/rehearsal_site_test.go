@@ -51,8 +51,13 @@ func TestHandleRehearsalSiteProxiesThroughPreviewPath(t *testing.T) {
 	if rr.Header().Get("X-Frame-Options") != "" {
 		t.Fatalf("X-Frame-Options was not stripped: %q", rr.Header().Get("X-Frame-Options"))
 	}
-	if csp := rr.Header().Get("Content-Security-Policy"); csp != "default-src 'self'" {
-		t.Fatalf("frame-ancestors was not stripped from CSP: %q", csp)
+	if csp := rr.Header().Get("Content-Security-Policy"); strings.Contains(csp, "frame-ancestors 'none'") {
+		t.Fatalf("unsafe frame-ancestors was not replaced: %q", csp)
+	}
+	for _, directive := range []string{"frame-ancestors 'self'", "form-action 'none'", "connect-src 'none'", "sandbox allow-scripts"} {
+		if csp := rr.Header().Get("Content-Security-Policy"); !strings.Contains(csp, directive) {
+			t.Fatalf("CSP %q missing %q", csp, directive)
+		}
 	}
 }
 

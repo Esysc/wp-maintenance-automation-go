@@ -16,6 +16,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Security findings now include concrete "How to fix" steps with commands, headers, and configuration examples for each issue.
 
 ### Fixed
+- Security scans now verify TLS certificates by default, and only rehearsal scans against self-signed staging containers opt out. The TLS probe now uses port 443 when the URL omits a port and sends the correct SNI hostname.
+- The embedded rehearsal preview is sandboxed without same-origin access and served with a restrictive CSP (`frame-ancestors 'self'`, `form-action 'none'`, `connect-src 'none'`), so preview scripts cannot act with the application session.
+- The rehearsal preview proxy caps response rewriting at 4 MiB and streams larger responses unchanged instead of buffering them in memory.
 - Rehearsal staging environments no longer fall back to PHP 8.2 when production runs a newer PHP version, preventing plugins that require PHP 8.3+ from fatally breaking WP-CLI. The staging image is now based on the official PHP Apache image so PHP 8.3+ can actually be installed.
 - Staging containers now receive `HTTP_X_FORWARDED_PROTO=https`, so production `wp-config.php` logic that reads that header works for both web requests and WP-CLI.
 - Rehearsal upgrade steps skip loading plugins and themes while updating, so one incompatible plugin cannot abort the whole stage before the healthcheck reports the real problem. A failed rehearsal healthcheck is now reported as a failure instead of being silently followed by a successful result.

@@ -65,7 +65,7 @@ func TestScanFindsCommonWordPressIssues(t *testing.T) {
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
 
-	report, err := Scan(context.Background(), server.URL, Options{Timeout: 5 * time.Second})
+	report, err := Scan(context.Background(), server.URL, Options{Timeout: 5 * time.Second, InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatalf("Scan() error = %v", err)
 	}
@@ -146,7 +146,7 @@ func TestScanCleanSiteHasNoFindings(t *testing.T) {
 	server := httptest.NewTLSServer(mux)
 	defer server.Close()
 
-	report, err := Scan(context.Background(), server.URL, Options{Timeout: 5 * time.Second})
+	report, err := Scan(context.Background(), server.URL, Options{Timeout: 5 * time.Second, InsecureSkipVerify: true})
 	if err != nil {
 		t.Fatalf("Scan() error = %v", err)
 	}
@@ -158,6 +158,17 @@ func TestScanCleanSiteHasNoFindings(t *testing.T) {
 func TestScanRejectsInvalidTarget(t *testing.T) {
 	if _, err := Scan(context.Background(), "not-a-url", Options{}); err == nil {
 		t.Fatal("Scan() error = nil, want error")
+	}
+}
+
+func TestScanVerifiesTLSCertificatesByDefault(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("<html><head><title>Test</title></head><body>Hello</body></html>"))
+	}))
+	defer server.Close()
+
+	if _, err := Scan(context.Background(), server.URL, Options{Timeout: 5 * time.Second}); err == nil {
+		t.Fatal("Scan() error = nil, want certificate verification failure")
 	}
 }
 

@@ -44,9 +44,10 @@ type Report struct {
 }
 
 type Options struct {
-	Timeout   time.Duration
-	MaxBody   int64
-	UserAgent string
+	Timeout            time.Duration
+	MaxBody            int64
+	UserAgent          string
+	InsecureSkipVerify bool
 }
 
 // Scan performs a non-invasive security configuration review against a
@@ -68,14 +69,15 @@ func Scan(ctx context.Context, target string, opts Options) (*Report, error) {
 	}
 
 	s := &scanner{
-		base:      base,
-		ctx:       ctx,
-		userAgent: opts.UserAgent,
-		maxBody:   opts.MaxBody,
+		base:               base,
+		ctx:                ctx,
+		userAgent:          opts.UserAgent,
+		maxBody:            opts.MaxBody,
+		insecureSkipVerify: opts.InsecureSkipVerify,
 		client: &http.Client{
 			Timeout: opts.Timeout,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.InsecureSkipVerify},
 			},
 		},
 	}
@@ -103,11 +105,12 @@ func Scan(ctx context.Context, target string, opts Options) (*Report, error) {
 }
 
 type scanner struct {
-	base      *url.URL
-	ctx       context.Context
-	userAgent string
-	maxBody   int64
-	client    *http.Client
+	base               *url.URL
+	ctx                context.Context
+	userAgent          string
+	maxBody            int64
+	insecureSkipVerify bool
+	client             *http.Client
 }
 
 type probe struct {
@@ -152,9 +155,24 @@ func (s *scanner) checkTransport(report *Report) {
 		return
 	}
 
+	host := s.base.Hostname()
+	port := s.base.Port()
+	if port == "" {
+		port = "443"
+	}
+	address := net.JoinHostPort(host, port)
+
 	dialer := &net.Dialer{Timeout: 8 * time.Second}
-	conn, err := tls.DialWithDialer(dialer, "tcp", s.base.Host, &tls.Config{InsecureSkipVerify: true})
+	conn, err := tls.DialWithDialer(dialer, "tcp", address, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: s.insecureSkipVerify,
+	})
 	if err != nil {
+		if !s.insecureSkipVerify {
+			report.add("tls-certificate", SeverityHigh, "TLS certificate could not be verified",
+				fmt.Sprintf("The TLS handshake with %s failed: %v", address, err),
+				"Install a valid certificate that matches the site hostname and includes the full intermediate chain.")
+		}
 		return
 	}
 	defer conn.Close()

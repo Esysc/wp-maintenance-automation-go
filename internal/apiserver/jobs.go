@@ -934,7 +934,10 @@ func (s *APIServer) processJob(tuple *jobTuple) {
 
 		setStatus("running", "Running security review on upgraded rehearsal environment...", 84)
 		scanCtx, cancelScan := context.WithTimeout(context.Background(), 60*time.Second)
-		securityReport, securityErr := security.Scan(scanCtx, env.HealthURL, security.Options{Timeout: 8 * time.Second})
+		securityReport, securityErr := security.Scan(scanCtx, env.HealthURL, security.Options{
+			Timeout:            8 * time.Second,
+			InsecureSkipVerify: true, // rehearsal containers use a self-signed certificate
+		})
 		cancelScan()
 		if securityErr != nil {
 			upgradeSteps = append(upgradeSteps, rehearsalUpgradeStep{
